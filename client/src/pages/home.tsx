@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Camera, Edit, User, History, Stethoscope, LightbulbIcon } from "lucide-react";
+import { Camera, Edit, Scan, History, Zap, TrendingUp, Shield, Clock, Star, ArrowRight, Sparkles, Activity, Plus, AlertTriangle, CheckCircle } from "lucide-react";
 import { Link } from "wouter";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { ManualInput } from "@/components/manual-input";
@@ -7,13 +7,14 @@ import { AnalysisResults } from "@/components/analysis-results";
 import { AIChatbot, AIChatbotButton } from "@/components/ai-chatbot";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import type { ScanHistory } from "@shared/schema";
-
-// Mock user ID for demo - in real app this would come from authentication
-const DEMO_USER_ID = "demo-user-123";
 
 export default function Home() {
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -21,41 +22,40 @@ export default function Home() {
   const [resultsOpen, setResultsOpen] = useState(false);
   const [chatbotOpen, setChatbotOpen] = useState(false);
   const [currentResult, setCurrentResult] = useState<ScanHistory | null>(null);
-  const [emergencyAlert, setEmergencyAlert] = useState<ScanHistory | null>(null);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   // Get recent scans
-  const { data: recentScans, isLoading: scansLoading } = useQuery({
-    queryKey: ['/api/scans', DEMO_USER_ID],
+  const { data: recentScans = [], isLoading: scansLoading } = useQuery<ScanHistory[]>({
+    queryKey: ['/api/scans'],
+    enabled: !!user,
   });
 
-  // Get user profile
-  const { data: userProfile } = useQuery({
-    queryKey: ['/api/users', DEMO_USER_ID],
-  });
+  // Calculate statistics
+  const totalScans = recentScans.length;
+  const safeScans = recentScans.filter((scan: any) => scan.analysisResult?.safe).length;
+  const safetyRate = totalScans > 0 ? Math.round((safeScans / totalScans) * 100) : 0;
+  const recentScansList = recentScans.slice(0, 3);
 
   // Barcode scan mutation
   const barcodeScanMutation = useMutation({
     mutationFn: async (barcode: string) => {
       const response = await apiRequest('POST', '/api/scan/barcode', {
-        barcode,
-        userId: DEMO_USER_ID
+        barcode
       });
+      if (!response) {
+        throw new Error('Failed to scan barcode');
+      }
       return response.json();
     },
     onSuccess: (data) => {
       setCurrentResult(data.scan);
       setScannerOpen(false);
       setResultsOpen(true);
-      
-      // Check for high-risk alerts
-      if (data.analysisResult.riskLevel === 'danger') {
-        setEmergencyAlert(data.scan);
-      }
-      
-      queryClient.invalidateQueries({ queryKey: ['/api/scans', DEMO_USER_ID] });
+
+      queryClient.invalidateQueries({ queryKey: ['/api/scans'] });
       toast({
         title: "Scan completed",
         description: `Analysis: ${data.analysisResult.safe ? 'Safe to consume' : 'Caution advised'}`,
@@ -73,22 +73,18 @@ export default function Home() {
   // Manual analysis mutation
   const manualAnalysisMutation = useMutation({
     mutationFn: async (data: { productName?: string; ingredients: string }) => {
-      const response = await apiRequest('POST', '/api/scan/manual', {
-        ...data,
-        userId: DEMO_USER_ID
-      });
+      const response = await apiRequest('POST', '/api/scan/manual', data);
+      if (!response) {
+        throw new Error('Failed to analyze ingredients');
+      }
       return response.json();
     },
     onSuccess: (data) => {
       setCurrentResult(data.scan);
       setManualInputOpen(false);
       setResultsOpen(true);
-      
-      if (data.analysisResult.riskLevel === 'danger') {
-        setEmergencyAlert(data.scan);
-      }
-      
-      queryClient.invalidateQueries({ queryKey: ['/api/scans', DEMO_USER_ID] });
+
+      queryClient.invalidateQueries({ queryKey: ['/api/scans'] });
       toast({
         title: "Analysis completed",
         description: `Result: ${data.analysisResult.safe ? 'Safe to consume' : 'Caution advised'}`,
@@ -103,282 +99,239 @@ export default function Home() {
     }
   });
 
-  const handleBarcodeScanned = (barcode: string) => {
-    barcodeScanMutation.mutate(barcode);
-  };
-
-  const handleManualAnalysis = (data: { productName?: string; ingredients: string }) => {
-    manualAnalysisMutation.mutate(data);
-  };
-
-  const handleSaveResult = () => {
-    toast({
-      title: "Saved",
-      description: "Scan result saved to your history",
-    });
-  };
-
-  const handleShareResult = () => {
-    if (navigator.share && currentResult) {
-      navigator.share({
-        title: 'AllergyGuard Scan Result',
-        text: `Scanned ${currentResult.productName || 'Unknown Product'} - ${currentResult.analysisResult.safe ? 'Safe' : 'Caution advised'}`,
-      });
-    } else {
-      toast({
-        title: "Share",
-        description: "Share functionality would be implemented here",
-      });
-    }
-  };
-
-  const handleConsultDoctor = () => {
-    toast({
-      title: "Doctor Consultation",
-      description: "This would open doctor consultation booking",
-    });
-  };
-
-  const dismissEmergencyAlert = () => {
-    setEmergencyAlert(null);
-  };
-
-  const formatTimeAgo = (date: Date | string | null) => {
-    if (!date) return 'Unknown time';
-    const now = new Date();
+  const formatDate = (date: Date | string | null) => {
+    if (!date) return 'Unknown date';
     const scanDate = new Date(date);
-    const diffInMinutes = Math.floor((now.getTime() - scanDate.getTime()) / (1000 * 60));
-    
-    if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)} hours ago`;
-    return `${Math.floor(diffInMinutes / 1440)} days ago`;
+    return scanDate.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
-  const getRiskBadge = (riskLevel: string) => {
+  const getRiskColor = (riskLevel: string) => {
     switch (riskLevel) {
-      case 'safe':
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent">
-          <i className="fas fa-check-circle mr-1"></i>
-          Safe
-        </span>;
-      case 'caution':
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-          <i className="fas fa-exclamation-triangle mr-1"></i>
-          Caution
-        </span>;
-      case 'danger':
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive">
-          <i className="fas fa-exclamation-triangle mr-1"></i>
-          Danger
-        </span>;
-      default:
-        return null;
+      case 'safe': return 'text-green-600 bg-green-50 border-green-200';
+      case 'caution': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+      case 'danger': return 'text-red-600 bg-red-50 border-red-200';
+      default: return 'text-gray-600 bg-gray-50 border-gray-200';
     }
   };
 
   return (
-    <div className="min-h-screen pb-20">
-      {/* Emergency Alert Banner */}
-      {emergencyAlert && (
-        <Alert className="bg-destructive text-destructive-foreground m-4 border-l-4 border-red-600">
-          <div className="flex items-start space-x-3">
-            <i className="fas fa-exclamation-triangle text-xl mt-0.5"></i>
-            <div className="flex-1">
-              <h3 className="font-semibold text-sm">High Risk Alert!</h3>
-              <AlertDescription className="text-sm mt-1">
-                {emergencyAlert.productName || "This product"} contains allergens you're severely allergic to. DO NOT CONSUME.
-              </AlertDescription>
-              <div className="flex space-x-2 mt-2">
-                <Button 
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleConsultDoctor}
-                  className="bg-red-700 text-white hover:bg-red-800"
-                  data-testid="button-emergency-doctor"
-                >
-                  Contact Doctor Now
-                </Button>
-                <Button 
-                  size="sm"
-                  variant="outline"
-                  onClick={dismissEmergencyAlert}
-                  data-testid="button-dismiss-alert"
-                >
-                  Dismiss
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Alert>
-      )}
+    <div className="min-h-screen py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+      {/* Welcome Header */}
+      <div className="text-center space-y-4">
+        <div className="inline-flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950/20 dark:to-purple-950/20 rounded-full border border-blue-200 dark:border-blue-800">
+          <Sparkles className="w-4 h-4 text-blue-600" />
+          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">AI-Powered Food Safety</span>
+        </div>
 
-      {/* Quick Scan Section */}
-      <section className="p-4">
-        <div className="bg-card rounded-xl shadow-sm border border-border p-6 text-center">
-          <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4 relative">
-            <div className="absolute inset-0 bg-primary/20 rounded-full animate-pulse-ring"></div>
-            <Camera className="text-primary text-2xl relative z-10" size={32} />
-          </div>
-          <h2 className="text-xl font-semibold mb-2">Scan Your Food</h2>
-          <p className="text-muted-foreground text-sm mb-4">
-            Point your camera at the barcode or food label to check for allergens and drug interactions
+        <div className="space-y-2">
+          <h1 className="text-3xl lg:text-4xl font-bold bg-gradient-to-r from-gray-900 via-blue-800 to-purple-800 dark:from-gray-100 dark:via-blue-300 dark:to-purple-300 bg-clip-text text-transparent">
+            Welcome back, {user?.firstName || user?.username}!
+          </h1>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            Scan, analyze, and stay safe with intelligent food allergy detection powered by AI
           </p>
-          <Button 
-            onClick={() => setScannerOpen(true)}
-            className="w-full"
-            data-testid="button-start-scanning"
-          >
-            <i className="fas fa-qrcode mr-2"></i>
-            Start Scanning
-          </Button>
         </div>
-      </section>
+      </div>
 
-      {/* Quick Actions Grid */}
-      <section className="px-4 mb-6">
-        <h3 className="text-lg font-semibold mb-3">Quick Actions</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <button 
+      {/* Quick Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-green-700 dark:text-green-300">Total Scans</p>
+                <p className="text-3xl font-bold text-green-900 dark:text-green-100">{totalScans}</p>
+              </div>
+              <div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center">
+                <Scan className="w-6 h-6 text-white" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/20 dark:to-cyan-950/20 border-blue-200 dark:border-blue-800">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Safety Rate</p>
+                <p className="text-3xl font-bold text-blue-900 dark:text-blue-100">{safetyRate}%</p>
+              </div>
+              <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center">
+                <Shield className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <Progress value={safetyRate} className="mt-3" />
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-950/20 dark:to-pink-950/20 border-purple-200 dark:border-purple-800">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-purple-700 dark:text-purple-300">This Week</p>
+                <p className="text-3xl font-bold text-purple-900 dark:text-purple-100">{Math.min(totalScans, 12)}</p>
+              </div>
+              <div className="w-12 h-12 bg-purple-500 rounded-xl flex items-center justify-center">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick Actions */}
+      <Card className="bg-gradient-to-r from-white to-gray-50 dark:from-gray-900 dark:to-gray-800 shadow-lg">
+        <CardHeader className="text-center pb-4">
+          <CardTitle className="text-2xl font-bold flex items-center justify-center space-x-2">
+            <Zap className="w-6 h-6 text-yellow-500" />
+            <span>Quick Scan</span>
+          </CardTitle>
+          <p className="text-muted-foreground">Choose your preferred scanning method</p>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Button
+            size="lg"
+            onClick={() => setScannerOpen(true)}
+            className="h-24 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
+          >
+            <div className="flex flex-col items-center space-y-2">
+              <Camera className="w-8 h-8" />
+              <div className="text-center">
+                <div className="font-semibold">Scan Barcode</div>
+                <div className="text-sm opacity-90">Use camera to scan</div>
+              </div>
+            </div>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="lg"
             onClick={() => setManualInputOpen(true)}
-            className="bg-card border border-border rounded-lg p-4 text-left hover:bg-secondary/50 transition-colors"
-            data-testid="button-manual-input"
+            className="h-24 border-2 border-dashed border-gray-300 hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:hover:border-gray-500 dark:hover:bg-gray-800 transition-all duration-200"
           >
-            <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-3">
-              <Edit className="text-accent" size={20} />
-            </div>
-            <h4 className="font-medium text-sm">Manual Input</h4>
-            <p className="text-xs text-muted-foreground mt-1">Enter ingredients manually</p>
-          </button>
-          
-          <Link href="/profile">
-            <button 
-              className="bg-card border border-border rounded-lg p-4 text-left hover:bg-secondary/50 transition-colors w-full"
-              data-testid="button-profile"
-            >
-              <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-3">
-                <User className="text-primary" size={20} />
+            <div className="flex flex-col items-center space-y-2">
+              <Edit className="w-8 h-8" />
+              <div className="text-center">
+                <div className="font-semibold">Manual Entry</div>
+                <div className="text-sm text-muted-foreground">Type ingredients</div>
               </div>
-              <h4 className="font-medium text-sm">My Profile</h4>
-              <p className="text-xs text-muted-foreground mt-1">Update allergies & meds</p>
-            </button>
-          </Link>
-          
-          <Link href="/history">
-            <button 
-              className="bg-card border border-border rounded-lg p-4 text-left hover:bg-secondary/50 transition-colors w-full"
-              data-testid="button-history"
-            >
-              <div className="w-10 h-10 bg-secondary/50 rounded-lg flex items-center justify-center mb-3">
-                <History className="text-muted-foreground" size={20} />
-              </div>
-              <h4 className="font-medium text-sm">Scan History</h4>
-              <p className="text-xs text-muted-foreground mt-1">View past results</p>
-            </button>
-          </Link>
-          
-          <button 
-            onClick={handleConsultDoctor}
-            className="bg-card border border-border rounded-lg p-4 text-left hover:bg-secondary/50 transition-colors"
-            data-testid="button-consult-doctor"
-          >
-            <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-3">
-              <Stethoscope className="text-accent" size={20} />
             </div>
-            <h4 className="font-medium text-sm">Consult Doctor</h4>
-            <p className="text-xs text-muted-foreground mt-1">Book appointment</p>
-          </button>
-        </div>
-      </section>
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Recent Scans */}
-      <section className="px-4 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold">Recent Scans</h3>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center space-x-2">
+              <History className="w-5 h-5" />
+              <span>Recent Scans</span>
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">Your latest food safety analyses</p>
+          </div>
           <Link href="/history">
-            <button className="text-primary text-sm font-medium" data-testid="button-view-all-scans">
+            <Button variant="outline" size="sm">
               View All
-            </button>
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
           </Link>
-        </div>
-        
-        {scansLoading ? (
-          <div className="space-y-3">
-            {[1, 2].map((i) => (
-              <div key={i} className="bg-card border border-border rounded-lg p-4">
-                <div className="animate-pulse">
-                  <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
-                  <div className="h-3 bg-muted rounded w-1/2 mb-2"></div>
-                  <div className="h-3 bg-muted rounded w-2/3"></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : recentScans && Array.isArray(recentScans) && recentScans.length > 0 ? (
-          <div className="space-y-3">
-            {recentScans.slice(0, 3).map((scan: ScanHistory) => (
-              <div key={scan.id} className="bg-card border border-border rounded-lg p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2 mb-2">
-                      <h4 className="font-medium text-sm" data-testid={`scan-name-${scan.id}`}>
-                        {scan.productName || "Unknown Product"}
-                      </h4>
-                      {getRiskBadge(scan.analysisResult.riskLevel)}
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2" data-testid={`scan-time-${scan.id}`}>
-                      Scanned {formatTimeAgo(scan.scannedAt)}
-                    </p>
-                    <p className="text-xs text-muted-foreground" data-testid={`scan-summary-${scan.id}`}>
-                      {scan.analysisResult.allergenAlerts.length === 0 ? 'No allergens detected' : `${scan.analysisResult.allergenAlerts.length} allergen(s) found`} • 
-                      {scan.analysisResult.drugInteractions.length === 0 ? ' No drug interactions' : ` ${scan.analysisResult.drugInteractions.length} interaction(s)`}
-                    </p>
+        </CardHeader>
+        <CardContent>
+          {scansLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center space-x-4 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg animate-pulse">
+                  <div className="w-12 h-12 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
                   </div>
-                  <button 
-                    onClick={() => {
-                      setCurrentResult(scan);
-                      setResultsOpen(true);
-                    }}
-                    className="text-muted-foreground hover:text-foreground p-1"
-                    data-testid={`button-view-scan-${scan.id}`}
-                  >
-                    <i className="fas fa-chevron-right text-xs"></i>
-                  </button>
                 </div>
+              ))}
+            </div>
+          ) : recentScansList.length > 0 ? (
+            <div className="space-y-3">
+              {recentScansList.map((scan: any) => (
+                <div key={scan.id} className="flex items-center space-x-4 p-4 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800/50 dark:to-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700 hover:shadow-md transition-all duration-200">
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                    scan.analysisResult?.safe
+                      ? 'bg-green-100 dark:bg-green-900/30'
+                      : 'bg-red-100 dark:bg-red-900/30'
+                  }`}>
+                    {scan.analysisResult?.safe ? (
+                      <CheckCircle className="w-6 h-6 text-green-600" />
+                    ) : (
+                      <AlertTriangle className="w-6 h-6 text-red-600" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground truncate">
+                      {scan.productName || 'Manual Entry'}
+                    </p>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <Badge
+                        variant="outline"
+                        className={`${getRiskColor(scan.analysisResult?.riskLevel || 'unknown')} text-xs`}
+                      >
+                        {scan.analysisResult?.riskLevel || 'Unknown'}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {formatDate(scan.scannedAt)}
+                      </span>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm">
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Scan className="w-8 h-8 text-gray-400" />
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="bg-card border border-border rounded-lg p-6 text-center">
-            <History className="mx-auto mb-2 text-muted-foreground" size={24} />
-            <p className="text-sm text-muted-foreground">No scans yet</p>
-            <p className="text-xs text-muted-foreground mt-1">Start scanning to see your history here</p>
-          </div>
-        )}
-      </section>
+              <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-2">No scans yet</h3>
+              <p className="text-sm text-muted-foreground mb-4">Start by scanning your first food item</p>
+              <Button onClick={() => setScannerOpen(true)} className="bg-gradient-to-r from-green-500 to-emerald-600">
+                <Plus className="w-4 h-4 mr-2" />
+                Start Scanning
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Health Tips */}
-      <section className="px-4 mb-6">
-        <h3 className="text-lg font-semibold mb-3">Health Tips</h3>
-        <div className="bg-gradient-to-r from-accent/10 to-primary/10 border border-border rounded-lg p-4">
-          <div className="flex items-start space-x-3">
-            <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
-              <LightbulbIcon className="text-accent-foreground" size={16} />
+      <Card className="bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-950/20 dark:to-red-950/20 border-orange-200 dark:border-orange-800">
+        <CardContent className="p-6">
+          <div className="flex items-start space-x-4">
+            <div className="w-12 h-12 bg-orange-500 rounded-xl flex items-center justify-center flex-shrink-0">
+              <Activity className="w-6 h-6 text-white" />
             </div>
-            <div>
-              <h4 className="font-medium text-sm mb-1">Reading Food Labels</h4>
-              <p className="text-xs text-muted-foreground">
-                Always check the "Contains" section and ingredient list for potential allergens, even in products you've used before.
+            <div className="flex-1">
+              <h3 className="font-semibold text-orange-900 dark:text-orange-100 mb-2">Daily Health Tip</h3>
+              <p className="text-orange-800 dark:text-orange-200 text-sm leading-relaxed">
+                Always read ingredient labels carefully, even for familiar products. Manufacturers may change formulations without notice,
+                potentially introducing new allergens. When in doubt, contact the manufacturer directly.
               </p>
             </div>
           </div>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
       {/* Modals */}
       <BarcodeScanner
         isOpen={scannerOpen}
         onClose={() => setScannerOpen(false)}
-        onScan={handleBarcodeScanned}
+        onScan={(barcode) => barcodeScanMutation.mutate(barcode)}
         onManualInput={() => {
           setScannerOpen(false);
           setManualInputOpen(true);
@@ -388,25 +341,30 @@ export default function Home() {
       <ManualInput
         isOpen={manualInputOpen}
         onClose={() => setManualInputOpen(false)}
-        onAnalyze={handleManualAnalysis}
+        onAnalyze={(data) => manualAnalysisMutation.mutate(data)}
       />
 
-      <AnalysisResults
-        isOpen={resultsOpen}
-        onClose={() => setResultsOpen(false)}
-        result={currentResult}
-        onSave={handleSaveResult}
-        onShare={handleShareResult}
-        onConsultDoctor={handleConsultDoctor}
-      />
+      {currentResult && (
+        <AnalysisResults
+          isOpen={resultsOpen}
+          onClose={() => {
+            setResultsOpen(false);
+            setCurrentResult(null);
+          }}
+          result={currentResult}
+          onSave={() => {}}
+          onShare={() => {}}
+          onConsultDoctor={() => {}}
+        />
+      )}
 
       <AIChatbot
         isOpen={chatbotOpen}
         onClose={() => setChatbotOpen(false)}
-        userId={DEMO_USER_ID}
       />
 
       <AIChatbotButton onClick={() => setChatbotOpen(true)} />
+      </div>
     </div>
   );
 }

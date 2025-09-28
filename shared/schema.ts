@@ -1,25 +1,29 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, json, timestamp, integer } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  email: text("email").notNull().unique(),
-  allergies: json("allergies").$type<string[]>().default([]),
-  medications: json("medications").$type<string[]>().default([]),
-  emergencyContact: text("emergency_contact"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+// Type definitions for development-only setup
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  passwordHash: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  allergies: string[];
+  medications: string[];
+  emergencyContact?: string | null;
+  isEmailVerified: boolean;
+  lastLoginAt?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
-export const scanHistory = pgTable("scan_history", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  productName: text("product_name"),
-  barcode: text("barcode"),
-  ingredients: json("ingredients").$type<string[]>().notNull(),
-  analysisResult: json("analysis_result").$type<{
+export interface ScanHistory {
+  id: string;
+  userId: string;
+  productName?: string | null;
+  barcode?: string | null;
+  ingredients: string[];
+  analysisResult: {
     safe: boolean;
     allergenAlerts: Array<{
       allergen: string;
@@ -33,36 +37,58 @@ export const scanHistory = pgTable("scan_history", {
       message: string;
     }>;
     riskLevel: 'safe' | 'caution' | 'danger';
-  }>().notNull(),
-  scannedAt: timestamp("scanned_at").defaultNow(),
+  };
+  scannedAt: Date | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  userId: string;
+  message: string;
+  response: string;
+  timestamp: Date;
+}
+
+// Validation schemas
+export const registerSchema = z.object({
+  username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username must be at most 20 characters"),
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  firstName: z.string().min(1, "First name is required").optional(),
+  lastName: z.string().min(1, "Last name is required").optional(),
 });
 
-export const chatMessages = pgTable("chat_messages", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  message: text("message").notNull(),
-  response: text("response").notNull(),
-  timestamp: timestamp("timestamp").defaultNow(),
+export const loginSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(1, "Password is required"),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({
-  id: true,
-  createdAt: true,
+export const updateProfileSchema = z.object({
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  allergies: z.array(z.string()).optional(),
+  medications: z.array(z.string()).optional(),
+  emergencyContact: z.string().optional(),
 });
 
-export const insertScanHistorySchema = createInsertSchema(scanHistory).omit({
-  id: true,
-  scannedAt: true,
+export const scanAnalysisSchema = z.object({
+  barcode: z.string().optional(),
+  productName: z.string().optional(),
+  ingredients: z.array(z.string()),
 });
 
-export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
-  id: true,
-  timestamp: true,
+export const chatMessageSchema = z.object({
+  message: z.string().min(1, "Message cannot be empty"),
 });
 
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
-export type InsertScanHistory = z.infer<typeof insertScanHistorySchema>;
-export type ScanHistory = typeof scanHistory.$inferSelect;
-export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
-export type ChatMessage = typeof chatMessages.$inferSelect;
+// Insert types for data creation (removing Drizzle references)
+export type InsertUser = Omit<User, 'id' | 'createdAt' | 'updatedAt' | 'lastLoginAt'>;
+export type InsertScanHistory = Omit<ScanHistory, 'id' | 'scannedAt'>;
+export type InsertChatMessage = Omit<ChatMessage, 'id' | 'timestamp'>;
+
+// Inferred types from schemas
+export type RegisterData = z.infer<typeof registerSchema>;
+export type LoginData = z.infer<typeof loginSchema>;
+export type UpdateProfileData = z.infer<typeof updateProfileSchema>;
+export type ScanAnalysisData = z.infer<typeof scanAnalysisSchema>;
+export type ChatMessageData = z.infer<typeof chatMessageSchema>;
