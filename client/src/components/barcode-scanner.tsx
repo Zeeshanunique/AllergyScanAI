@@ -66,7 +66,7 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
       if (track && 'torch' in track.getCapabilities()) {
         try {
           await track.applyConstraints({
-            advanced: [{ torch: !flashlightOn }]
+            advanced: [{ torch: !flashlightOn } as any]
           });
           setFlashlightOn(!flashlightOn);
         } catch (err) {

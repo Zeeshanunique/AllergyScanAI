@@ -313,7 +313,7 @@ export default function Home() {
               </div>
             ))}
           </div>
-        ) : recentScans && recentScans.length > 0 ? (
+        ) : recentScans && Array.isArray(recentScans) && recentScans.length > 0 ? (
           <div className="space-y-3">
             {recentScans.slice(0, 3).map((scan: ScanHistory) => (
               <div key={scan.id} className="bg-card border border-border rounded-lg p-4">

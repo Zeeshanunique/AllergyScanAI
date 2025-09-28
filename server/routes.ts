@@ -13,7 +13,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.createUser(userData);
       res.json(user);
     } catch (error) {
-      res.status(400).json({ message: "Invalid user data", error: error.message });
+      res.status(400).json({ message: "Invalid user data", error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -38,7 +38,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(user);
     } catch (error) {
-      res.status(400).json({ message: "Invalid update data", error: error.message });
+      res.status(400).json({ message: "Invalid update data", error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -85,7 +85,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error('Barcode scan error:', error);
-      res.status(500).json({ message: "Failed to process barcode scan", error: error.message });
+      res.status(500).json({ message: "Failed to process barcode scan", error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -132,7 +132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error('Manual scan error:', error);
-      res.status(500).json({ message: "Failed to analyze ingredients", error: error.message });
+      res.status(500).json({ message: "Failed to analyze ingredients", error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -181,7 +181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ response });
     } catch (error) {
       console.error('Chat error:', error);
-      res.status(500).json({ message: "Failed to process chat message", error: error.message });
+      res.status(500).json({ message: "Failed to process chat message", error: error instanceof Error ? error.message : String(error) });
     }
   });
 

@@ -82,13 +82,13 @@ export default function Profile() {
   });
 
   useEffect(() => {
-    if (userProfile) {
+    if (userProfile && typeof userProfile === 'object') {
       setFormData({
-        username: userProfile.username || "",
-        email: userProfile.email || "",
-        allergies: userProfile.allergies || [],
-        medications: userProfile.medications || [],
-        emergencyContact: userProfile.emergencyContact || "",
+        username: (userProfile as any).username || "",
+        email: (userProfile as any).email || "",
+        allergies: (userProfile as any).allergies || [],
+        medications: (userProfile as any).medications || [],
+        emergencyContact: (userProfile as any).emergencyContact || "",
       });
     } else if (!isLoading) {
       // No user profile exists, set up for first time
@@ -203,13 +203,13 @@ export default function Profile() {
                     onClick={() => {
                       setIsEditing(false);
                       // Reset form data if editing existing profile
-                      if (userProfile) {
+                      if (userProfile && typeof userProfile === 'object') {
                         setFormData({
-                          username: userProfile.username || "",
-                          email: userProfile.email || "",
-                          allergies: userProfile.allergies || [],
-                          medications: userProfile.medications || [],
-                          emergencyContact: userProfile.emergencyContact || "",
+                          username: (userProfile as any).username || "",
+                          email: (userProfile as any).email || "",
+                          allergies: (userProfile as any).allergies || [],
+                          medications: (userProfile as any).medications || [],
+                          emergencyContact: (userProfile as any).emergencyContact || "",
                         });
                       }
                     }}

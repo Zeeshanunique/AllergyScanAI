@@ -18,7 +18,7 @@ export default function ScanHistoryPage() {
   const [resultsOpen, setResultsOpen] = useState(false);
 
   // Get scan history
-  const { data: scanHistory, isLoading } = useQuery({
+  const { data: scanHistory, isLoading } = useQuery<ScanHistory[]>({
     queryKey: ['/api/scans', DEMO_USER_ID],
     enabled: !!DEMO_USER_ID,
   });
@@ -63,7 +63,7 @@ export default function ScanHistoryPage() {
   };
 
   // Filter scans based on search term and risk filter
-  const filteredScans = scanHistory?.filter((scan: ScanHistory) => {
+  const filteredScans = (scanHistory && Array.isArray(scanHistory)) ? scanHistory.filter((scan: ScanHistory) => {
     const matchesSearch = !searchTerm || 
       (scan.productName?.toLowerCase().includes(searchTerm.toLowerCase())) ||
       scan.ingredients.some(ingredient => 
@@ -73,7 +73,7 @@ export default function ScanHistoryPage() {
     const matchesFilter = filterRisk === 'all' || scan.analysisResult.riskLevel === filterRisk;
     
     return matchesSearch && matchesFilter;
-  }) || [];
+  }) : [];
 
   const handleViewScan = (scan: ScanHistory) => {
     setSelectedScan(scan);
@@ -97,10 +97,10 @@ export default function ScanHistoryPage() {
     // Handle doctor consultation
   };
 
-  const riskStats = scanHistory?.reduce((acc, scan: ScanHistory) => {
+  const riskStats = (scanHistory && Array.isArray(scanHistory)) ? scanHistory.reduce((acc: Record<string, number>, scan: ScanHistory) => {
     acc[scan.analysisResult.riskLevel] = (acc[scan.analysisResult.riskLevel] || 0) + 1;
     return acc;
-  }, {} as Record<string, number>) || {};
+  }, {} as Record<string, number>) : {};
 
   if (isLoading) {
     return (
@@ -125,7 +125,7 @@ export default function ScanHistoryPage() {
         </div>
 
         {/* Stats Cards */}
-        {scanHistory && scanHistory.length > 0 && (
+        {scanHistory && Array.isArray(scanHistory) && scanHistory.length > 0 && (
           <div className="grid grid-cols-3 gap-3">
             <Card className="text-center">
               <CardContent className="pt-4 pb-4">
@@ -155,7 +155,7 @@ export default function ScanHistoryPage() {
         )}
 
         {/* Search and Filter */}
-        {scanHistory && scanHistory.length > 0 && (
+        {scanHistory && Array.isArray(scanHistory) && scanHistory.length > 0 && (
           <div className="space-y-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground" size={16} />
@@ -273,7 +273,7 @@ export default function ScanHistoryPage() {
                 </CardContent>
               </Card>
             ))
-          ) : scanHistory && scanHistory.length > 0 ? (
+          ) : scanHistory && Array.isArray(scanHistory) && scanHistory.length > 0 ? (
             <Card>
               <CardContent className="pt-6 text-center">
                 <Search className="mx-auto mb-2 text-muted-foreground" size={24} />

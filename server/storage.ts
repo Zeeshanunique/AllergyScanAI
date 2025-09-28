@@ -40,8 +40,11 @@ export class MemStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
     const user: User = { 
-      ...insertUser, 
+      ...insertUser,
       id,
+      allergies: Array.isArray(insertUser.allergies) ? [...insertUser.allergies] : [],
+      medications: Array.isArray(insertUser.medications) ? [...insertUser.medications] : [],
+      emergencyContact: insertUser.emergencyContact || null,
       createdAt: new Date()
     };
     this.users.set(id, user);
@@ -52,7 +55,13 @@ export class MemStorage implements IStorage {
     const user = this.users.get(id);
     if (!user) return undefined;
     
-    const updatedUser = { ...user, ...updates };
+    const updatedUser: User = { 
+      ...user, 
+      ...updates,
+      allergies: Array.isArray(updates.allergies) ? [...updates.allergies] : user.allergies,
+      medications: Array.isArray(updates.medications) ? [...updates.medications] : user.medications,
+      emergencyContact: updates.emergencyContact ?? user.emergencyContact,
+    };
     this.users.set(id, updatedUser);
     return updatedUser;
   }
@@ -68,6 +77,9 @@ export class MemStorage implements IStorage {
     const scan: ScanHistory = {
       ...insertScan,
       id,
+      barcode: insertScan.barcode || null,
+      productName: insertScan.productName || null,
+      ingredients: Array.isArray(insertScan.ingredients) ? [...insertScan.ingredients] : [],
       scannedAt: new Date()
     };
     this.scanHistory.set(id, scan);
