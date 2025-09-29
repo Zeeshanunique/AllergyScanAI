@@ -6,9 +6,10 @@ import { storage } from "./database";
 import { registerSchema, loginSchema, updateProfileSchema } from "@shared/schema";
 import { analyzeIngredients, chatWithAI } from "./services/openai";
 import { getBarcodeData, parseIngredientsText } from "./services/foodApi";
+import { processBarcodeScanAsync, processManualScanAsync, getJobResult, getQueueStats } from "./services/asyncProcessor";
 import { AuthService } from "./services/auth";
 import { requireAuth, optionalAuth, guestOnly, createSession, destroySession } from "./middleware/auth";
-import { authRateLimit, apiRateLimit, scanRateLimit } from "./middleware/security";
+import { authRateLimit, apiRateLimit, scanRateLimit, heavyOperationsRateLimit } from "./middleware/security";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Apply API rate limiting to all API routes
@@ -122,8 +123,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
-  // Barcode scanning with scan rate limiting
-  app.post("/api/scan/barcode", scanRateLimit, requireAuth, async (req, res) => {
+  // Barcode scanning with combined rate limiting
+  app.post("/api/scan/barcode", scanRateLimit, heavyOperationsRateLimit, requireAuth, async (req, res) => {
     try {
       const { barcode } = req.body;
 
@@ -169,8 +170,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Manual ingredient analysis with scan rate limiting
-  app.post("/api/scan/manual", scanRateLimit, requireAuth, async (req, res) => {
+  // Manual ingredient analysis with combined rate limiting
+  app.post("/api/scan/manual", scanRateLimit, heavyOperationsRateLimit, requireAuth, async (req, res) => {
     try {
       const { ingredients, productName } = req.body;
 
@@ -216,11 +217,147 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Scan history
+  // Async barcode scanning - returns immediately with job ID
+  app.post("/api/scan/barcode/async", scanRateLimit, heavyOperationsRateLimit, requireAuth, async (req, res) => {
+    try {
+      const { barcode } = req.body;
+
+      if (!barcode) {
+        return res.status(400).json({ message: "Barcode is required" });
+      }
+
+      // Start async processing
+      const jobId = await processBarcodeScanAsync(req.userId!, barcode);
+
+      res.json({
+        jobId,
+        status: 'processing',
+        message: 'Scan started. Use the job ID to check status.',
+        pollUrl: `/api/jobs/${jobId}`
+      });
+    } catch (error) {
+      console.error('Async barcode scan error:', error);
+      res.status(500).json({ message: "Failed to start barcode scan", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Async manual ingredient analysis - returns immediately with job ID
+  app.post("/api/scan/manual/async", scanRateLimit, heavyOperationsRateLimit, requireAuth, async (req, res) => {
+    try {
+      const { ingredients, productName } = req.body;
+
+      if (!ingredients) {
+        return res.status(400).json({ message: "Ingredients are required" });
+      }
+
+      // Parse ingredients
+      const parsedIngredients = typeof ingredients === 'string'
+        ? parseIngredientsText(ingredients)
+        : ingredients;
+
+      // Start async processing
+      const jobId = await processManualScanAsync(req.userId!, parsedIngredients, productName);
+
+      res.json({
+        jobId,
+        status: 'processing',
+        message: 'Analysis started. Use the job ID to check status.',
+        pollUrl: `/api/jobs/${jobId}`
+      });
+    } catch (error) {
+      console.error('Async manual scan error:', error);
+      res.status(500).json({ message: "Failed to start ingredient analysis", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Job status endpoint for polling
+  app.get("/api/jobs/:jobId", requireAuth, async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = await getJobResult(jobId);
+
+      if (!job) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      // Only allow users to access their own jobs
+      if (job.userId !== req.userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const response: any = {
+        jobId: job.id,
+        status: job.status,
+        createdAt: job.createdAt,
+        completedAt: job.completedAt
+      };
+
+      if (job.status === 'completed' && job.result) {
+        response.result = job.result;
+      } else if (job.status === 'failed' && job.error) {
+        response.error = job.error;
+      } else if (job.status === 'processing') {
+        response.message = 'Job is currently being processed. Please check again in a moment.';
+      }
+
+      res.json(response);
+    } catch (error) {
+      console.error('Job status error:', error);
+      res.status(500).json({ message: "Failed to get job status" });
+    }
+  });
+
+  // Queue statistics endpoint (for monitoring)
+  app.get("/api/admin/queue-stats", requireAuth, async (req, res) => {
+    try {
+      const stats = getQueueStats();
+      res.json({
+        ...stats,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Queue stats error:', error);
+      res.status(500).json({ message: "Failed to get queue statistics" });
+    }
+  });
+
+  // Database statistics endpoint (for monitoring)
+  app.get("/api/admin/db-stats", requireAuth, async (req, res) => {
+    try {
+      const stats = await storage.getDatabaseStats();
+      res.json({
+        ...stats,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Database stats error:', error);
+      res.status(500).json({ message: "Failed to get database statistics" });
+    }
+  });
+
+  // Scan history with pagination support
   app.get("/api/scans", requireAuth, async (req, res) => {
     try {
-      const scans = await storage.getScanHistory(req.userId!);
-      res.json(scans);
+      const limit = parseInt(req.query.limit as string) || undefined;
+      const offset = parseInt(req.query.offset as string) || undefined;
+
+      let scans;
+      if (limit !== undefined && offset !== undefined) {
+        scans = await storage.getScanHistoryPaginated(req.userId!, limit, offset);
+      } else if (limit !== undefined) {
+        scans = await storage.getRecentScans(req.userId!, limit);
+      } else {
+        scans = await storage.getScanHistory(req.userId!);
+      }
+
+      // Include total count for pagination
+      const totalCount = await storage.getScanCount(req.userId!);
+
+      res.json({
+        scans,
+        totalCount,
+        hasMore: offset !== undefined ? (offset + (limit || 0)) < totalCount : false
+      });
     } catch (error) {
       res.status(500).json({ message: "Failed to get scan history" });
     }
@@ -273,8 +410,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/chat", requireAuth, async (req, res) => {
     try {
-      const chatHistory = await storage.getChatHistory(req.userId!);
-      res.json(chatHistory);
+      const limit = parseInt(req.query.limit as string) || undefined;
+      const offset = parseInt(req.query.offset as string) || undefined;
+
+      let chatHistory;
+      if (limit !== undefined && offset !== undefined) {
+        chatHistory = await storage.getChatHistoryPaginated(req.userId!, limit, offset);
+      } else if (limit !== undefined) {
+        chatHistory = await storage.getRecentChatMessages(req.userId!, limit);
+      } else {
+        chatHistory = await storage.getChatHistory(req.userId!);
+      }
+
+      // Include total count for pagination
+      const totalCount = await storage.getChatCount(req.userId!);
+
+      res.json({
+        chatHistory,
+        totalCount,
+        hasMore: offset !== undefined ? (offset + (limit || 0)) < totalCount : false
+      });
     } catch (error) {
       res.status(500).json({ message: "Failed to get chat history" });
     }

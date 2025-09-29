@@ -16,13 +16,24 @@ export default function Scanner() {
   const [manualInputOpen, setManualInputOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [currentResult, setCurrentResult] = useState<ScanHistory | null>(null);
+  const [analysisStep, setAnalysisStep] = useState<'idle' | 'scanning' | 'processing' | 'analyzing' | 'complete'>('idle');
+  const [scannedBarcode, setScannedBarcode] = useState<string>('');
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Barcode scan mutation
+  // Barcode scan mutation with step-by-step progress
   const barcodeScanMutation = useMutation({
     mutationFn: async (barcode: string) => {
+      console.log('🔍 Starting barcode analysis for:', barcode);
+      
+      // Step 1: Processing barcode
+      setAnalysisStep('processing');
+      await new Promise(resolve => setTimeout(resolve, 800)); // Show processing state
+      
+      // Step 2: Analyzing with AI
+      setAnalysisStep('analyzing');
+      
       const response = await apiRequest('POST', '/api/scan/barcode', {
         barcode
       });
@@ -32,28 +43,46 @@ export default function Scanner() {
       return response.json();
     },
     onSuccess: (data) => {
+      console.log('✅ Analysis complete:', data);
+      setAnalysisStep('complete');
       setCurrentResult(data.scan);
-      setScannerOpen(false);
-      setResultsOpen(true);
-
-      queryClient.invalidateQueries({ queryKey: ['/api/scans'] });
-      toast({
-        title: "Scan completed",
-        description: `Analysis: ${data.analysisResult.safe ? 'Safe to consume' : 'Caution advised'}`,
-      });
+      
+      // Brief delay to show completion, then show results
+      setTimeout(() => {
+        setAnalysisStep('idle');
+        setResultsOpen(true);
+        
+        queryClient.invalidateQueries({ queryKey: ['/api/scans'] });
+        toast({
+          title: "Analysis completed",
+          description: `Result: ${data.analysisResult?.safe ? 'Safe to consume' : 'Caution advised'}`,
+          variant: data.analysisResult?.safe ? "default" : "destructive",
+        });
+      }, 800);
     },
     onError: (error: any) => {
+      console.error('❌ Analysis failed:', error);
+      setAnalysisStep('idle');
       toast({
-        title: "Scan failed",
+        title: "Analysis failed",
         description: error.message || "Failed to analyze barcode",
         variant: "destructive",
       });
     }
   });
 
-  // Manual analysis mutation
+  // Manual analysis mutation with step-by-step progress
   const manualAnalysisMutation = useMutation({
     mutationFn: async (data: { productName?: string; ingredients: string }) => {
+      console.log('🔍 Starting manual analysis for:', data);
+      
+      // Step 1: Processing ingredients
+      setAnalysisStep('processing');
+      await new Promise(resolve => setTimeout(resolve, 600)); // Show processing state
+      
+      // Step 2: Analyzing with AI
+      setAnalysisStep('analyzing');
+      
       const response = await apiRequest('POST', '/api/scan/manual', data);
       if (!response) {
         throw new Error('Failed to analyze ingredients');
@@ -61,17 +90,26 @@ export default function Scanner() {
       return response.json();
     },
     onSuccess: (data) => {
+      console.log('✅ Manual analysis complete:', data);
+      setAnalysisStep('complete');
       setCurrentResult(data.scan);
-      setManualInputOpen(false);
-      setResultsOpen(true);
-
-      queryClient.invalidateQueries({ queryKey: ['/api/scans'] });
-      toast({
-        title: "Analysis completed",
-        description: `Result: ${data.analysisResult.safe ? 'Safe to consume' : 'Caution advised'}`,
-      });
+      
+      // Brief delay to show completion, then show results
+      setTimeout(() => {
+        setAnalysisStep('idle');
+        setResultsOpen(true);
+        
+        queryClient.invalidateQueries({ queryKey: ['/api/scans'] });
+        toast({
+          title: "Analysis completed",
+          description: `Result: ${data.analysisResult?.safe ? 'Safe to consume' : 'Caution advised'}`,
+          variant: data.analysisResult?.safe ? "default" : "destructive",
+        });
+      }, 800);
     },
     onError: (error: any) => {
+      console.error('❌ Manual analysis failed:', error);
+      setAnalysisStep('idle');
       toast({
         title: "Analysis failed",
         description: error.message || "Failed to analyze ingredients",
@@ -81,10 +119,17 @@ export default function Scanner() {
   });
 
   const handleBarcodeScanned = (barcode: string) => {
+    console.log('📊 Barcode scanned:', barcode);
+    setScannedBarcode(barcode);
+    setAnalysisStep('processing');
+    setScannerOpen(false); // Close scanner immediately
     barcodeScanMutation.mutate(barcode);
   };
 
   const handleManualAnalysis = (data: { productName?: string; ingredients: string }) => {
+    console.log('📝 Starting manual analysis for:', data);
+    setAnalysisStep('processing');
+    setManualInputOpen(false); // Close manual input immediately
     manualAnalysisMutation.mutate(data);
   };
 
@@ -308,6 +353,75 @@ export default function Scanner() {
         onClose={() => setManualInputOpen(false)}
         onAnalyze={handleManualAnalysis}
       />
+
+      {/* Analysis Progress Overlay */}
+      {analysisStep !== 'idle' && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 mx-4 max-w-md w-full shadow-2xl">
+            <div className="text-center space-y-6">
+              {/* Progress Icon */}
+              <div className="w-24 h-24 mx-auto relative">
+                {analysisStep === 'processing' && (
+                  <div className="w-full h-full border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+                )}
+                {analysisStep === 'analyzing' && (
+                  <div className="w-full h-full border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
+                )}
+                {analysisStep === 'complete' && (
+                  <div className="w-full h-full bg-green-100 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-12 h-12 text-green-600" />
+                  </div>
+                )}
+              </div>
+
+              {/* Progress Text */}
+              <div className="space-y-2">
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  {analysisStep === 'processing' && 'Processing Barcode'}
+                  {analysisStep === 'analyzing' && 'AI Analysis in Progress'}
+                  {analysisStep === 'complete' && 'Analysis Complete'}
+                </h3>
+                <p className="text-gray-600 dark:text-gray-300">
+                  {analysisStep === 'processing' && 'Decoding product information...'}
+                  {analysisStep === 'analyzing' && 'Checking ingredients for allergens and drug interactions...'}
+                  {analysisStep === 'complete' && 'Analysis completed successfully!'}
+                </p>
+                {scannedBarcode && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                    Barcode: {scannedBarcode}
+                  </p>
+                )}
+              </div>
+
+              {/* Progress Steps */}
+              <div className="flex justify-center space-x-4">
+                <div className={`w-3 h-3 rounded-full transition-colors ${
+                  analysisStep === 'processing' || analysisStep === 'analyzing' || analysisStep === 'complete' 
+                    ? 'bg-blue-600' 
+                    : 'bg-gray-300'
+                }`}></div>
+                <div className={`w-3 h-3 rounded-full transition-colors ${
+                  analysisStep === 'analyzing' || analysisStep === 'complete' 
+                    ? 'bg-purple-600' 
+                    : 'bg-gray-300'
+                }`}></div>
+                <div className={`w-3 h-3 rounded-full transition-colors ${
+                  analysisStep === 'complete' 
+                    ? 'bg-green-600' 
+                    : 'bg-gray-300'
+                }`}></div>
+              </div>
+
+              {/* Step Labels */}
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                <span>Process</span>
+                <span>Analyze</span>
+                <span>Complete</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AnalysisResults
         isOpen={resultsOpen}

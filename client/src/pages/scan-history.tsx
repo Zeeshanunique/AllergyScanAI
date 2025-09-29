@@ -18,10 +18,13 @@ export default function ScanHistoryPage() {
   const { user } = useAuth();
 
   // Get scan history
-  const { data: scanHistory, isLoading } = useQuery<ScanHistory[]>({
+  const { data: scansResponse, isLoading } = useQuery({
     queryKey: ['/api/scans'],
     enabled: !!user,
   });
+
+  // Extract scans array from response (handle both old and new API format)
+  const scanHistory = Array.isArray(scansResponse) ? scansResponse : ((scansResponse as any)?.scans || []);
 
   const formatDate = (date: Date | string | null) => {
     if (!date) return 'Unknown date';

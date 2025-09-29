@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/queryClient';
+import { apiRequest, cacheConfig } from '@/lib/queryClient';
 import { tokenStorage } from '@/lib/auth';
 import type { User, RegisterData, LoginData } from '@shared/schema';
 
@@ -63,7 +63,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     },
     enabled: isInitialized && !!tokenStorage.get(),
     retry: false,
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    ...cacheConfig.user, // Use optimized user cache config
   });
 
   const isLoading = !isInitialized || isUserLoading;

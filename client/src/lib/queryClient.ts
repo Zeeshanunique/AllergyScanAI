@@ -61,11 +61,59 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      staleTime: 1000 * 60 * 5, // 5 minutes default stale time
+      gcTime: 1000 * 60 * 30, // 30 minutes garbage collection time
+      retry: (failureCount, error: any) => {
+        // Retry network errors but not auth errors
+        if (error?.message?.includes('401') || error?.message?.includes('403')) {
+          return false;
+        }
+        return failureCount < 2; // Retry up to 2 times
+      },
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
     },
     mutations: {
-      retry: false,
+      retry: (failureCount, error: any) => {
+        // Don't retry client errors (4xx) except for network issues
+        if (error?.message?.includes('4')) {
+          return false;
+        }
+        return failureCount < 1; // Retry once for server errors
+      },
+      retryDelay: 1000, // 1 second delay for mutation retries
     },
   },
 });
+
+// Performance-optimized cache configurations for specific data types
+export const cacheConfig = {
+  // User data cache - longer stale time since profile changes infrequently
+  user: {
+    staleTime: 1000 * 60 * 15, // 15 minutes
+    gcTime: 1000 * 60 * 60, // 1 hour
+  },
+
+  // Scan history cache - moderate stale time, frequently updated
+  scanHistory: {
+    staleTime: 1000 * 30, // 30 seconds
+    gcTime: 1000 * 60 * 10, // 10 minutes
+  },
+
+  // Individual scan results - cache longer since they don't change
+  scanResult: {
+    staleTime: 1000 * 60 * 60, // 1 hour
+    gcTime: 1000 * 60 * 60 * 24, // 24 hours
+  },
+
+  // Product data from barcodes - cache very long since rarely changes
+  productData: {
+    staleTime: 1000 * 60 * 60 * 24, // 24 hours
+    gcTime: 1000 * 60 * 60 * 24 * 7, // 1 week
+  },
+
+  // Chat history - short stale time for real-time feel
+  chatHistory: {
+    staleTime: 1000 * 10, // 10 seconds
+    gcTime: 1000 * 60 * 5, // 5 minutes
+  }
+};

@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, cacheConfig } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import type { ScanHistory } from "@shared/schema";
@@ -27,11 +27,15 @@ export default function Home() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
-  // Get recent scans
-  const { data: recentScans = [], isLoading: scansLoading } = useQuery<ScanHistory[]>({
+  // Get recent scans with optimized caching
+  const { data: scansResponse, isLoading: scansLoading } = useQuery({
     queryKey: ['/api/scans'],
     enabled: !!user,
+    ...cacheConfig.scanHistory, // Use optimized scan history cache
   });
+
+  // Extract scans array from response (handle both old and new API format)
+  const recentScans = Array.isArray(scansResponse) ? scansResponse : ((scansResponse as any)?.scans || []);
 
   // Calculate statistics
   const totalScans = recentScans.length;

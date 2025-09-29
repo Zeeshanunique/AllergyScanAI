@@ -57,14 +57,32 @@ const createTables = () => {
     )
   `);
 
-  // Create indexes for better performance
+  // Create comprehensive indexes for optimal query performance
   db.exec(`
+    -- User table indexes
     CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
     CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+    CREATE INDEX IF NOT EXISTS idx_users_last_login ON users (last_login_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at DESC);
+
+    -- Scan history indexes for fast retrieval
     CREATE INDEX IF NOT EXISTS idx_scan_history_user_id ON scan_history (user_id);
-    CREATE INDEX IF NOT EXISTS idx_scan_history_scanned_at ON scan_history (scanned_at);
+    CREATE INDEX IF NOT EXISTS idx_scan_history_scanned_at ON scan_history (scanned_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_scan_history_barcode ON scan_history (barcode);
+    CREATE INDEX IF NOT EXISTS idx_scan_history_product_name ON scan_history (product_name);
+
+    -- Composite indexes for common query patterns
+    CREATE INDEX IF NOT EXISTS idx_scan_history_user_time ON scan_history (user_id, scanned_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_scan_history_user_product ON scan_history (user_id, product_name);
+    CREATE INDEX IF NOT EXISTS idx_scan_history_barcode_time ON scan_history (barcode, scanned_at DESC);
+
+    -- Chat messages indexes
     CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages (user_id);
-    CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages (timestamp);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages (timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_user_time ON chat_messages (user_id, timestamp DESC);
+
+    -- Full-text search indexes for better search capabilities
+    CREATE INDEX IF NOT EXISTS idx_scan_history_ingredients_text ON scan_history (ingredients);
   `);
 };
 
@@ -136,12 +154,46 @@ export const userQueries = {
   `)
 };
 
-// Scan history operations
+// Optimized scan history operations leveraging indexes
 export const scanQueries = {
   getByUserId: db.prepare(`
     SELECT id, user_id as userId, product_name as productName, barcode, ingredients,
            analysis_result as analysisResult, scanned_at as scannedAt
     FROM scan_history WHERE user_id = ? ORDER BY scanned_at DESC
+  `),
+
+  getByUserIdWithLimit: db.prepare(`
+    SELECT id, user_id as userId, product_name as productName, barcode, ingredients,
+           analysis_result as analysisResult, scanned_at as scannedAt
+    FROM scan_history WHERE user_id = ? ORDER BY scanned_at DESC LIMIT ?
+  `),
+
+  getByUserIdPaginated: db.prepare(`
+    SELECT id, user_id as userId, product_name as productName, barcode, ingredients,
+           analysis_result as analysisResult, scanned_at as scannedAt
+    FROM scan_history WHERE user_id = ? ORDER BY scanned_at DESC LIMIT ? OFFSET ?
+  `),
+
+  getByBarcode: db.prepare(`
+    SELECT id, user_id as userId, product_name as productName, barcode, ingredients,
+           analysis_result as analysisResult, scanned_at as scannedAt
+    FROM scan_history WHERE barcode = ? ORDER BY scanned_at DESC
+  `),
+
+  getByProductName: db.prepare(`
+    SELECT id, user_id as userId, product_name as productName, barcode, ingredients,
+           analysis_result as analysisResult, scanned_at as scannedAt
+    FROM scan_history WHERE user_id = ? AND product_name LIKE ? ORDER BY scanned_at DESC
+  `),
+
+  getRecentByUser: db.prepare(`
+    SELECT id, user_id as userId, product_name as productName, barcode, ingredients,
+           analysis_result as analysisResult, scanned_at as scannedAt
+    FROM scan_history WHERE user_id = ? AND scanned_at > ? ORDER BY scanned_at DESC
+  `),
+
+  countByUser: db.prepare(`
+    SELECT COUNT(*) as count FROM scan_history WHERE user_id = ?
   `),
 
   getById: db.prepare(`
@@ -153,19 +205,46 @@ export const scanQueries = {
   create: db.prepare(`
     INSERT INTO scan_history (id, user_id, product_name, barcode, ingredients, analysis_result, scanned_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
+  `),
+
+  deleteOld: db.prepare(`
+    DELETE FROM scan_history WHERE scanned_at < ?
   `)
 };
 
-// Chat message operations
+// Optimized chat message operations
 export const chatQueries = {
   getByUserId: db.prepare(`
     SELECT id, user_id as userId, message, response, timestamp
     FROM chat_messages WHERE user_id = ? ORDER BY timestamp DESC
   `),
 
+  getByUserIdWithLimit: db.prepare(`
+    SELECT id, user_id as userId, message, response, timestamp
+    FROM chat_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?
+  `),
+
+  getByUserIdPaginated: db.prepare(`
+    SELECT id, user_id as userId, message, response, timestamp
+    FROM chat_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?
+  `),
+
+  getRecentByUser: db.prepare(`
+    SELECT id, user_id as userId, message, response, timestamp
+    FROM chat_messages WHERE user_id = ? AND timestamp > ? ORDER BY timestamp DESC
+  `),
+
+  countByUser: db.prepare(`
+    SELECT COUNT(*) as count FROM chat_messages WHERE user_id = ?
+  `),
+
   create: db.prepare(`
     INSERT INTO chat_messages (id, user_id, message, response, timestamp)
     VALUES (?, ?, ?, ?, ?)
+  `),
+
+  deleteOld: db.prepare(`
+    DELETE FROM chat_messages WHERE timestamp < ?
   `)
 };
 
@@ -274,6 +353,62 @@ export class SQLiteStorage {
     }));
   }
 
+  // Optimized methods leveraging indexes
+  async getScanHistoryPaginated(userId: string, limit: number, offset: number): Promise<ScanHistory[]> {
+    const rows = scanQueries.getByUserIdPaginated.all(userId, limit, offset) as any[];
+    return rows.map(row => ({
+      ...row,
+      ingredients: parseJsonField(row.ingredients),
+      analysisResult: parseAnalysisResult(row.analysisResult),
+      scannedAt: new Date(row.scannedAt)
+    }));
+  }
+
+  async getRecentScans(userId: string, limit: number = 10): Promise<ScanHistory[]> {
+    const rows = scanQueries.getByUserIdWithLimit.all(userId, limit) as any[];
+    return rows.map(row => ({
+      ...row,
+      ingredients: parseJsonField(row.ingredients),
+      analysisResult: parseAnalysisResult(row.analysisResult),
+      scannedAt: new Date(row.scannedAt)
+    }));
+  }
+
+  async getScansByBarcode(barcode: string): Promise<ScanHistory[]> {
+    const rows = scanQueries.getByBarcode.all(barcode) as any[];
+    return rows.map(row => ({
+      ...row,
+      ingredients: parseJsonField(row.ingredients),
+      analysisResult: parseAnalysisResult(row.analysisResult),
+      scannedAt: new Date(row.scannedAt)
+    }));
+  }
+
+  async searchScansByProduct(userId: string, productName: string): Promise<ScanHistory[]> {
+    const rows = scanQueries.getByProductName.all(userId, `%${productName}%`) as any[];
+    return rows.map(row => ({
+      ...row,
+      ingredients: parseJsonField(row.ingredients),
+      analysisResult: parseAnalysisResult(row.analysisResult),
+      scannedAt: new Date(row.scannedAt)
+    }));
+  }
+
+  async getScanCount(userId: string): Promise<number> {
+    const result = scanQueries.countByUser.get(userId) as any;
+    return result?.count || 0;
+  }
+
+  async getRecentScansSince(userId: string, since: Date): Promise<ScanHistory[]> {
+    const rows = scanQueries.getRecentByUser.all(userId, since.toISOString()) as any[];
+    return rows.map(row => ({
+      ...row,
+      ingredients: parseJsonField(row.ingredients),
+      analysisResult: parseAnalysisResult(row.analysisResult),
+      scannedAt: new Date(row.scannedAt)
+    }));
+  }
+
   async createScanHistory(scanData: InsertScanHistory): Promise<ScanHistory> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -313,6 +448,36 @@ export class SQLiteStorage {
     }));
   }
 
+  // Optimized chat methods
+  async getChatHistoryPaginated(userId: string, limit: number, offset: number): Promise<ChatMessage[]> {
+    const rows = chatQueries.getByUserIdPaginated.all(userId, limit, offset) as any[];
+    return rows.map(row => ({
+      ...row,
+      timestamp: new Date(row.timestamp)
+    }));
+  }
+
+  async getRecentChatMessages(userId: string, limit: number = 20): Promise<ChatMessage[]> {
+    const rows = chatQueries.getByUserIdWithLimit.all(userId, limit) as any[];
+    return rows.map(row => ({
+      ...row,
+      timestamp: new Date(row.timestamp)
+    }));
+  }
+
+  async getChatMessagesSince(userId: string, since: Date): Promise<ChatMessage[]> {
+    const rows = chatQueries.getRecentByUser.all(userId, since.toISOString()) as any[];
+    return rows.map(row => ({
+      ...row,
+      timestamp: new Date(row.timestamp)
+    }));
+  }
+
+  async getChatCount(userId: string): Promise<number> {
+    const result = chatQueries.countByUser.get(userId) as any;
+    return result?.count || 0;
+  }
+
   async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -330,7 +495,88 @@ export class SQLiteStorage {
     if (!message) throw new Error('Failed to create chat message');
     return message;
   }
+
+  // Database maintenance methods
+  async cleanupOldData(daysToKeep: number = 90): Promise<{ scansDeleted: number; chatsDeleted: number }> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+    const cutoffIso = cutoffDate.toISOString();
+
+    const scansResult = scanQueries.deleteOld.run(cutoffIso);
+    const chatsResult = chatQueries.deleteOld.run(cutoffIso);
+
+    return {
+      scansDeleted: scansResult.changes,
+      chatsDeleted: chatsResult.changes
+    };
+  }
+
+  // Database optimization methods
+  async vacuum(): Promise<void> {
+    db.exec('VACUUM');
+  }
+
+  async analyze(): Promise<void> {
+    db.exec('ANALYZE');
+  }
+
+  async getDatabaseStats(): Promise<{
+    userCount: number;
+    scanCount: number;
+    chatCount: number;
+    dbSizeKB: number;
+  }> {
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as any;
+    const scanCount = db.prepare('SELECT COUNT(*) as count FROM scan_history').get() as any;
+    const chatCount = db.prepare('SELECT COUNT(*) as count FROM chat_messages').get() as any;
+    const dbSize = db.prepare('SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()').get() as any;
+
+    return {
+      userCount: userCount.count,
+      scanCount: scanCount.count,
+      chatCount: chatCount.count,
+      dbSizeKB: Math.round(dbSize.size / 1024)
+    };
+  }
 }
+
+// Automatic database maintenance scheduler
+const scheduleMaintenanceTasks = () => {
+  // Run ANALYZE every hour to optimize query planner
+  setInterval(async () => {
+    try {
+      await storage.analyze();
+      console.log('Database ANALYZE completed');
+    } catch (error) {
+      console.error('Database ANALYZE failed:', error);
+    }
+  }, 60 * 60 * 1000); // 1 hour
+
+  // Cleanup old data daily (keep 90 days)
+  setInterval(async () => {
+    try {
+      const result = await storage.cleanupOldData(90);
+      if (result.scansDeleted > 0 || result.chatsDeleted > 0) {
+        console.log(`Database cleanup completed: ${result.scansDeleted} scans deleted, ${result.chatsDeleted} chats deleted`);
+      }
+    } catch (error) {
+      console.error('Database cleanup failed:', error);
+    }
+  }, 24 * 60 * 60 * 1000); // 24 hours
+
+  // Run VACUUM weekly for optimal storage efficiency
+  setInterval(async () => {
+    try {
+      await storage.vacuum();
+      console.log('Database VACUUM completed');
+    } catch (error) {
+      console.error('Database VACUUM failed:', error);
+    }
+  }, 7 * 24 * 60 * 60 * 1000); // 7 days
+};
+
+// Start maintenance tasks
+scheduleMaintenanceTasks();
 
 // Export database instance and storage
 export { db };

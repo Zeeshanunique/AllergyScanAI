@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, Flashlight, CheckCircle, AlertCircle, Camera, ScanLine, RotateCw } from "lucide-react";
-import { BrowserMultiFormatReader, BrowserBarcodeReader, BrowserDatamatrixReader, BrowserPDF417Reader } from '@zxing/browser';
+import { BrowserMultiFormatReader } from '@zxing/browser';
 import { Result, NotFoundException, BarcodeFormat } from '@zxing/library';
 
 interface BarcodeScannerProps {
@@ -22,6 +22,7 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
   const streamRef = useRef<MediaStream | null>(null);
   const codeReader = useRef<BrowserMultiFormatReader | null>(null);
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -37,13 +38,19 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
 
   const initializeScanner = async () => {
     try {
+      console.log('Initializing barcode scanner...');
       await startCamera();
-      if (codeReader.current && videoRef.current) {
-        await startScanning();
-      }
+      
+      // Wait a moment for video to be ready, then start scanning
+      setTimeout(() => {
+        if (videoRef.current) {
+          console.log('Starting scanning after camera initialization...');
+          startScanning();
+        }
+      }, 1000);
     } catch (err) {
       console.error('Failed to initialize scanner:', err);
-      setError('Failed to initialize scanner');
+      setError(`Failed to initialize scanner: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -57,38 +64,86 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
 
   const startCamera = async () => {
     try {
+      console.log('Requesting camera access...');
+
+      // Check if mediaDevices is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera not supported by this browser');
+      }
+
       // Request camera with optimal settings for barcode scanning
       const constraints = {
         video: {
           facingMode: "environment", // Use back camera
           width: { ideal: 1920, min: 640 },
-          height: { ideal: 1080, min: 480 },
-          focusMode: "continuous",
-          zoom: 1.0
+          height: { ideal: 1080, min: 480 }
         }
       };
 
+      console.log('Getting user media with constraints:', constraints);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        // Ensure video is playing before scanning
-        await new Promise((resolve) => {
-          if (videoRef.current) {
-            videoRef.current.onloadedmetadata = () => resolve(undefined);
-          }
-        });
-      }
-      
+      console.log('Camera stream obtained successfully');
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          console.log('Video element set with stream');
+
+          // Ensure video is fully loaded and playing before scanning
+          await new Promise((resolve, reject) => {
+            if (videoRef.current) {
+              const video = videoRef.current;
+              
+              const onReady = () => {
+                console.log('Video ready for scanning:', {
+                  readyState: video.readyState,
+                  videoWidth: video.videoWidth,
+                  videoHeight: video.videoHeight,
+                  paused: video.paused
+                });
+                resolve(undefined);
+              };
+
+              // Wait for both metadata and can play events
+              let metadataLoaded = false;
+              let canPlay = false;
+
+              video.onloadedmetadata = () => {
+                console.log('Video metadata loaded');
+                metadataLoaded = true;
+                if (canPlay) onReady();
+              };
+
+              video.oncanplay = () => {
+                console.log('Video can play');
+                canPlay = true;
+                if (metadataLoaded) onReady();
+              };
+
+              video.onerror = (e) => {
+                console.error('Video error:', e);
+                reject(new Error('Video failed to load'));
+              };
+
+              // Ensure video starts playing
+              video.play().catch(err => {
+                console.warn('Video play failed (might be due to autoplay policy):', err);
+                // Continue anyway as some browsers block autoplay but still allow scanning
+              });
+            }
+          });
+        }
+
       setHasPermission(true);
       setError("");
       setScanStatus('idle');
+      console.log('Camera started successfully');
     } catch (err) {
       setHasPermission(false);
-      setError("Camera access denied or not available");
-      setScanStatus('error');
+      const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Camera error:", err);
+      setError(`Camera access failed: ${errorMessage}`);
+      setScanStatus('error');
     }
   };
 
@@ -103,58 +158,139 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
   };
 
   const startScanning = async () => {
-    if (!videoRef.current || isScanning) return;
-    
+    if (!videoRef.current || isScanning) {
+      console.log('Cannot start scanning:', { videoRef: !!videoRef.current, isScanning });
+      return;
+    }
+
+    const video = videoRef.current;
+
+    // Check if video is ready for scanning
+    if (video.readyState < 2) {
+      console.log('Video not ready yet, readyState:', video.readyState);
+      // Wait a bit and try again
+      setTimeout(() => startScanning(), 500);
+      return;
+    }
+
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      console.log('Video dimensions not available yet:', { width: video.videoWidth, height: video.videoHeight });
+      setTimeout(() => startScanning(), 500);
+      return;
+    }
+
     try {
+      console.log('Starting barcode scanning...');
+      console.log('Video element state:', {
+        readyState: video.readyState,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        paused: video.paused,
+        currentTime: video.currentTime
+      });
+
       setIsScanning(true);
       setScanStatus('scanning');
-      
+
       // Initialize the code reader if not already done
       if (!codeReader.current) {
+        console.log('Initializing BrowserMultiFormatReader...');
         codeReader.current = new BrowserMultiFormatReader();
-        
-        // Configure reader for multiple formats
-        const hints = new Map();
-        hints.set(2, [
-          BarcodeFormat.EAN_13,
-          BarcodeFormat.EAN_8,
-          BarcodeFormat.UPC_A,
-          BarcodeFormat.UPC_E,
-          BarcodeFormat.CODE_128,
-          BarcodeFormat.CODE_39,
-          BarcodeFormat.CODE_93,
-          BarcodeFormat.CODABAR,
-          BarcodeFormat.ITF,
-          BarcodeFormat.RSS_14,
-          BarcodeFormat.RSS_EXPANDED,
-          BarcodeFormat.QR_CODE,
-          BarcodeFormat.DATA_MATRIX,
-          BarcodeFormat.PDF_417
-        ]);
-        codeReader.current = new BrowserMultiFormatReader(hints);
+        console.log('BrowserMultiFormatReader initialized');
       }
 
-      // Start continuous scanning
-      codeReader.current.decodeFromVideoDevice(undefined, videoRef.current, (result, error) => {
-        if (result) {
-          const format = BarcodeFormat[result.getBarcodeFormat()];
-          handleScanSuccess(result.getText(), format);
-        }
-        // Continue scanning - errors are normal when no barcode is detected
-      });
+      console.log('Starting continuous decode from video device...');
+      
+      // Try direct video scanning first
+      try {
+        await codeReader.current.decodeFromVideoDevice(undefined, video, (result, error) => {
+          if (result) {
+            console.log('🎉 Barcode detected:', result.getText(), 'Format:', BarcodeFormat[result.getBarcodeFormat()]);
+            const format = BarcodeFormat[result.getBarcodeFormat()];
+            handleScanSuccess(result.getText(), format);
+          } else if (error && !(error instanceof NotFoundException)) {
+            console.warn('Scan error (non-critical):', error.message);
+          }
+        });
+        console.log('✅ Direct video scanning started');
+      } catch (directScanError) {
+        console.warn('Direct video scan failed, trying canvas method:', directScanError);
+        // Fallback to manual canvas scanning
+        startCanvasScanning();
+      }
     } catch (err) {
-      console.error('Scan error:', err);
+      console.error('❌ Critical scan error:', err);
       setScanStatus('error');
-      setError('Scanning failed. Please try again.');
+      setError(`Scanning failed: ${err instanceof Error ? err.message : String(err)}`);
       setIsScanning(false);
     }
   };
 
+  const startCanvasScanning = () => {
+    console.log('Starting canvas-based scanning...');
+    
+    const scanInterval = setInterval(async () => {
+      if (!isScanning || !videoRef.current || !canvasRef.current || !codeReader.current) {
+        clearInterval(scanInterval);
+        return;
+      }
+
+      try {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) return;
+
+        // Set canvas size to match video
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        // Draw current video frame to canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Get image data from canvas
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        
+        // Try to decode from canvas
+        try {
+          const result = await codeReader.current.decodeFromCanvas(canvas);
+          if (result) {
+            console.log('🎉 Canvas barcode detected:', result.getText());
+            const format = BarcodeFormat[result.getBarcodeFormat()];
+            clearInterval(scanInterval);
+            handleScanSuccess(result.getText(), format);
+          }
+        } catch (err) {
+          // Ignore NotFoundException - normal when no barcode is found
+          if (!(err instanceof NotFoundException)) {
+            console.warn('Canvas scan error:', err);
+          }
+        }
+      } catch (err) {
+        console.error('Canvas scanning error:', err);
+      }
+    }, 200); // Scan every 200ms
+
+    // Store interval reference for cleanup
+    scanTimeoutRef.current = scanInterval as any;
+  };
+
   const stopScanning = () => {
+    console.log('Stopping barcode scanning...');
     setIsScanning(false);
+    
+    // Properly stop the scanning process
     if (codeReader.current) {
-      codeReader.current.reset();
+      try {
+        // Create a new instance to effectively stop scanning
+        codeReader.current = new BrowserMultiFormatReader();
+        console.log('Scanner reset successfully');
+      } catch (err) {
+        console.log('Stop scanning error (non-critical):', err);
+      }
     }
+    
     if (scanTimeoutRef.current) {
       clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = null;
@@ -162,6 +298,7 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
   };
 
   const handleScanSuccess = useCallback((barcode: string, format?: string) => {
+    console.log('🎉 Scan success handling started');
     setLastScanResult(barcode);
     setDetectedFormat(format || 'Unknown');
     setScanStatus('found');
@@ -170,14 +307,16 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
     
     // Add haptic feedback if available
     if ('vibrate' in navigator) {
-      navigator.vibrate(200);
+      navigator.vibrate([200, 100, 200]); // Success pattern
     }
     
-    // Call the parent's onScan function after a brief delay to show success state
+    // Show success state briefly, then close scanner and start analysis
     setTimeout(() => {
-      onScan(barcode);
-    }, 800);
-  }, [onScan]);
+      console.log('Closing scanner and starting analysis...');
+      onScan(barcode); // This will trigger the analysis
+      onClose(); // Auto-close the scanner immediately
+    }, 1000); // Reduced delay for faster UX
+  }, [onScan, onClose]);
 
   const toggleFlashlight = async () => {
     if (streamRef.current) {
@@ -276,14 +415,22 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
         {/* Camera preview area */}
         <div className="absolute inset-0">
           {hasPermission && !error ? (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-              data-testid="camera-preview"
-            />
+            <>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                data-testid="camera-preview"
+              />
+              {/* Hidden canvas for image processing */}
+              <canvas
+                ref={canvasRef}
+                style={{ display: 'none' }}
+                data-testid="barcode-canvas"
+              />
+            </>
           ) : (
             <div className="w-full h-full bg-gray-900 flex items-center justify-center">
               <div className="text-white text-center max-w-sm mx-auto p-6">
@@ -364,6 +511,7 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
             >
               Enter Manually
             </button>
+
           </div>
 
           {/* Tips */}
