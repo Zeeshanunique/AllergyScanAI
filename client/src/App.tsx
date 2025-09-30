@@ -11,6 +11,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Home from "@/pages/home";
 import Profile from "@/pages/profile";
 import ScanHistoryPage from "@/pages/scan-history";
+import { ConsultationsPage } from "@/pages/consultations";
 import Scanner from "@/pages/scanner";
 import Login from "@/pages/login";
 import Register from "@/pages/register";
@@ -61,6 +62,13 @@ function Router() {
         <ProtectedRoute>
           <Layout>
             <Profile />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/consultations">
+        <ProtectedRoute>
+          <Layout>
+            <ConsultationsPage />
           </Layout>
         </ProtectedRoute>
       </Route>

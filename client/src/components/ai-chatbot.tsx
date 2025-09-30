@@ -23,18 +23,16 @@ interface ChatMessage {
 export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
   const { user } = useAuth();
   const [inputMessage, setInputMessage] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      message: "",
-      response: "Hi! I'm your AI food safety assistant. I can help you understand allergens, medication interactions, and food safety guidelines. What would you like to know?",
-      timestamp: new Date(),
-      isUser: false,
-      content: "Hi! I'm your AI food safety assistant. I can help you understand allergens, medication interactions, and food safety guidelines. What would you like to know?"
-    }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+
+  // Fetch user profile for personalization
+  const { data: profileData } = useQuery({
+    queryKey: [`/api/users/${user?.id}`],
+    enabled: isOpen && !!user?.id,
+  });
 
   const { data: chatHistory } = useQuery({
     queryKey: ['/api/chat'],
@@ -52,8 +50,9 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
       return response.json();
     },
     onSuccess: (data, message) => {
-      const newMessage: ChatMessage = {
-        id: Date.now().toString(),
+      // Only add AI response since user message was already added optimistically
+      const aiMessage: ChatMessage = {
+        id: `ai-${Date.now()}`,
         message,
         response: data.response,
         timestamp: new Date(),
@@ -61,19 +60,15 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
         content: data.response
       };
       
-      setMessages(prev => [...prev, 
-        {
-          id: (Date.now() - 1).toString(),
-          message,
-          response: "",
-          timestamp: new Date(),
-          isUser: true,
-          content: message
-        },
-        newMessage
-      ]);
+      setMessages(prev => [...prev, aiMessage]);
       
+      // Update chat history
       queryClient.invalidateQueries({ queryKey: ['/api/chat'] });
+    },
+    onError: (error) => {
+      // Remove the optimistic user message on error
+      setMessages(prev => prev.filter(msg => !msg.id.includes('optimistic')));
+      console.error('Chat error:', error);
     }
   });
 
@@ -81,16 +76,67 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Create personalized welcome message
+  const createWelcomeMessage = (profile: any) => {
+    const firstName = profile?.firstName;
+    const allergies = profile?.allergies || [];
+    const medications = profile?.medications || [];
+    
+    let welcomeText = firstName 
+      ? `Hi ${firstName}! I'm your personalized AI food safety assistant.` 
+      : "Hi! I'm your AI food safety assistant.";
+    
+    if (allergies.length > 0 || medications.length > 0) {
+      welcomeText += " I have your profile information including";
+      if (allergies.length > 0) {
+        welcomeText += ` your ${allergies.length} known allergen${allergies.length > 1 ? 's' : ''} (${allergies.slice(0, 2).join(', ')}${allergies.length > 2 ? ', etc.' : ''})`;
+      }
+      if (medications.length > 0) {
+        if (allergies.length > 0) welcomeText += " and";
+        welcomeText += ` your ${medications.length} current medication${medications.length > 1 ? 's' : ''}`;
+      }
+      welcomeText += ", so I can give you personalized advice.";
+    } else {
+      welcomeText += " I can help you understand allergens, medication interactions, and food safety guidelines.";
+    }
+    
+    welcomeText += " What would you like to know?";
+    return welcomeText;
+  };
+
   useEffect(() => {
-    if (chatHistory && Array.isArray(chatHistory)) {
+    if (profileData) {
+      setUserProfile(profileData);
+    }
+  }, [profileData]);
+
+  useEffect(() => {
+    // Initialize messages with welcome message when component opens
+    if (userProfile && messages.length === 0) {
+      const welcomeMessage = createWelcomeMessage(userProfile);
+      setMessages([{
+        id: "welcome",
+        message: "",
+        response: welcomeMessage,
+        timestamp: new Date(),
+        isUser: false,
+        content: welcomeMessage
+      }]);
+    }
+  }, [userProfile]);
+
+  useEffect(() => {
+    // Load chat history only if we have history and no pending operations
+    if (!sendMessageMutation.isPending && chatHistory && Array.isArray(chatHistory) && chatHistory.length > 0) {
+      const welcomeMessage = createWelcomeMessage(userProfile);
       const formattedHistory: ChatMessage[] = [
         {
           id: "welcome",
           message: "",
-          response: "Hi! I'm your AI food safety assistant. I can help you understand allergens, medication interactions, and food safety guidelines. What would you like to know?",
+          response: welcomeMessage,
           timestamp: new Date(),
           isUser: false,
-          content: "Hi! I'm your AI food safety assistant. I can help you understand allergens, medication interactions, and food safety guidelines. What would you like to know?"
+          content: welcomeMessage
         }
       ];
       
@@ -117,54 +163,144 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
       
       setMessages(formattedHistory);
     }
-  }, [chatHistory]);
+  }, [chatHistory, userProfile, sendMessageMutation.isPending]);
 
   const handleSendMessage = () => {
     if (!inputMessage.trim() || sendMessageMutation.isPending) return;
     
-    sendMessageMutation.mutate(inputMessage.trim());
+    const messageToSend = inputMessage.trim();
+    
+    // Optimistically add user message immediately
+    const userMessage: ChatMessage = {
+      id: `user-optimistic-${Date.now()}`,
+      message: messageToSend,
+      response: "",
+      timestamp: new Date(),
+      isUser: true,
+      content: messageToSend
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
     setInputMessage("");
+    
+    sendMessageMutation.mutate(messageToSend);
   };
 
   const handleSuggestedQuestion = (question: string) => {
     setInputMessage(question);
   };
 
-  const suggestedQuestions = [
-    "What is cross-contamination and how can I avoid it?",
-    "How should I read food labels for hidden allergens?",
-    "What are common food-drug interactions?",
-    "How do I know if a food is safe for my allergies?",
-    "What should I do if I accidentally eat an allergen?",
-    "How can I cook safely with multiple food allergies?"
-  ];
+  // Generate personalized suggested questions
+  const generateSuggestedQuestions = (profile: any) => {
+    const allergies = profile?.allergies || [];
+    const medications = profile?.medications || [];
+    const firstName = profile?.firstName;
+    
+    const baseQuestions = [
+      "What is cross-contamination and how can I avoid it?",
+      "How should I read food labels for hidden allergens?",
+      "What are common food-drug interactions?",
+      "What should I do if I accidentally eat an allergen?",
+    ];
+    
+    const personalizedQuestions = [];
+    
+    // Add allergy-specific questions
+    if (allergies.length > 0) {
+      const primaryAllergen = allergies[0];
+      personalizedQuestions.push(`What foods should I avoid with my ${primaryAllergen} allergy?`);
+      personalizedQuestions.push(`Are there hidden sources of ${primaryAllergen} I should know about?`);
+      
+      if (allergies.length > 1) {
+        personalizedQuestions.push(`How can I manage multiple allergies like mine (${allergies.slice(0, 2).join(' and ')})?`);
+      }
+    }
+    
+    // Add medication-specific questions
+    if (medications.length > 0) {
+      personalizedQuestions.push(`What foods interact with my medications?`);
+      if (medications.length === 1) {
+        personalizedQuestions.push(`Are there any dietary restrictions while taking ${medications[0]}?`);
+      }
+    }
+    
+    // Add general personalized questions
+    if (firstName) {
+      personalizedQuestions.push(`What's the safest way for me to try new foods?`);
+    }
+    
+    // Combine and limit to 6 questions
+    const allQuestions = [...personalizedQuestions, ...baseQuestions];
+    return allQuestions.slice(0, 6);
+  };
+
+  const suggestedQuestions = generateSuggestedQuestions(userProfile);
 
   const formatMessage = (content: string) => {
-    // Format long AI responses with better structure
-    const paragraphs = content.split(/\n\n|\. (?=[A-Z])/);
+    // Split content by double line breaks to get sections
+    const sections = content.split(/\n\s*\n/).filter(section => section.trim());
     
-    return paragraphs.map((paragraph, index) => {
-      const trimmed = paragraph.trim();
+    return sections.map((section, sectionIndex) => {
+      const trimmed = section.trim();
       if (trimmed.length === 0) return null;
       
-      // Check for bullet points or lists
-      if (trimmed.includes('- ') || trimmed.includes('• ')) {
-        const items = trimmed.split(/\n?[-•]\s+/).filter(item => item.trim());
+      // Check for bold headings (markdown style **text**)
+      if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+        const headingText = trimmed.slice(2, -2);
         return (
-          <div key={index} className="mb-3">
-            {items.map((item, i) => (
-              <div key={i} className="flex items-start mb-1">
-                <span className="text-primary mr-2 mt-1">•</span>
-                <span className="text-sm leading-relaxed">{item.trim()}</span>
-              </div>
-            ))}
-          </div>
+          <h3 key={sectionIndex} className="font-semibold text-base mb-2 mt-4 first:mt-0 text-gray-900 dark:text-gray-100">
+            {headingText}
+          </h3>
         );
+      }
+      
+      // Check for bullet points or lists
+      if (trimmed.includes('• ') || trimmed.includes('- ')) {
+        const lines = trimmed.split('\n').filter(line => line.trim());
+        const listItems = lines.filter(line => line.trim().startsWith('• ') || line.trim().startsWith('- '));
+        
+        if (listItems.length > 0) {
+          return (
+            <div key={sectionIndex} className="mb-4">
+              {listItems.map((item, itemIndex) => {
+                const cleanItem = item.replace(/^[•-]\s*/, '').trim();
+                return (
+                  <div key={itemIndex} className="flex items-start mb-2">
+                    <span className="text-primary mr-3 mt-1 flex-shrink-0">•</span>
+                    <span className="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{cleanItem}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
+      }
+      
+      // Check for numbered lists
+      if (trimmed.match(/^\d+\.\s/)) {
+        const lines = trimmed.split('\n').filter(line => line.trim());
+        const numberedItems = lines.filter(line => line.trim().match(/^\d+\.\s/));
+        
+        if (numberedItems.length > 0) {
+          return (
+            <div key={sectionIndex} className="mb-4">
+              {numberedItems.map((item, itemIndex) => {
+                const cleanItem = item.replace(/^\d+\.\s*/, '').trim();
+                return (
+                  <div key={itemIndex} className="flex items-start mb-2">
+                    <span className="text-primary mr-3 mt-1 flex-shrink-0 font-medium">{itemIndex + 1}.</span>
+                    <span className="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{cleanItem}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
       }
       
       // Regular paragraphs
       return (
-        <p key={index} className="mb-3 text-sm leading-relaxed">
+        <p key={sectionIndex} className="mb-3 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
           {trimmed}
         </p>
       );
@@ -187,8 +323,15 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
               <i className="fas fa-robot text-primary-foreground text-sm"></i>
             </div>
             <div>
-              <h3 className="font-semibold">AI Assistant</h3>
-              <p className="text-xs text-muted-foreground">Ask me about food safety</p>
+              <h3 className="font-semibold">
+                {userProfile?.firstName ? `AI Assistant for ${userProfile.firstName}` : 'AI Assistant'}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {userProfile?.allergies?.length > 0 || userProfile?.medications?.length > 0
+                  ? `Personalized for your ${userProfile.allergies?.length || 0} allergies & ${userProfile.medications?.length || 0} medications`
+                  : 'Ask me about food safety'
+                }
+              </p>
             </div>
           </div>
           <button 
@@ -272,7 +415,7 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
             </div>
           ))}
           
-          {/* Typing Indicator */}
+          {/* Typing Indicator - Only show when actively sending */}
           {sendMessageMutation.isPending && (
             <div className="flex items-start space-x-3">
               <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm">
@@ -324,7 +467,11 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
               <Input
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
-                placeholder="Ask me anything about food safety, allergies, or nutrition..."
+                placeholder={
+                  userProfile?.allergies?.length > 0 
+                    ? `Ask about ${userProfile.allergies[0]} safety, interactions, or anything else...`
+                    : "Ask me anything about food safety, allergies, or nutrition..."
+                }
                 onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                 disabled={sendMessageMutation.isPending}
                 data-testid="input-chat-message"
@@ -351,7 +498,12 @@ export function AIChatbot({ isOpen, onClose }: AIChatbotProps) {
           
           {/* Input Helper Text */}
           <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-            <span>💡 Tip: Be specific about your allergies or dietary needs</span>
+            <span>
+              {userProfile?.allergies?.length > 0 || userProfile?.medications?.length > 0
+                ? "💡 I know your profile - ask me anything specific!"
+                : "💡 Tip: Be specific about your allergies or dietary needs"
+              }
+            </span>
             <span>Usually responds in seconds</span>
           </div>
         </div>

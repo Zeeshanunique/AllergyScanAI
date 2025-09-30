@@ -1,4 +1,4 @@
-import { X, CheckCircle, AlertTriangle, Share, Bookmark } from "lucide-react";
+import { X, CheckCircle, AlertTriangle, Share, Bookmark, Stethoscope } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ScanHistory } from "@shared/schema";
@@ -68,11 +68,21 @@ export function AnalysisResults({
         <div className="p-4 space-y-4">
           {/* Product Info */}
           <div className="bg-secondary/30 rounded-lg p-4">
-            <h4 className="font-semibold mb-2" data-testid="text-product-name">
-              {productName || "Unknown Product"}
-            </h4>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-semibold" data-testid="text-product-name">
+                {productName || "Unknown Product"}
+              </h4>
+              {result.barcode && ['101', '102', '103', '104', '105', '106', '107', '108', '109', '110', '111', '112', '113', '114', '115', '116', '117', '118', '119', '120'].includes(result.barcode) && (
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-xs">
+                  Demo Product
+                </Badge>
+              )}
+            </div>
             <p className="text-sm text-muted-foreground">
               Scanned {result.scannedAt ? new Date(result.scannedAt).toLocaleString() : 'recently'}
+              {result.barcode && (
+                <span className="ml-2">• Barcode: {result.barcode}</span>
+              )}
             </p>
           </div>
           
@@ -183,12 +193,13 @@ export function AnalysisResults({
                 <Share className="mr-2" size={16} />
                 Share
               </Button>
-              <Button 
+              <Button
                 variant="secondary"
                 onClick={onConsultDoctor}
                 data-testid="button-consult-doctor"
+                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
               >
-                <i className="fas fa-user-md mr-2"></i>
+                <Stethoscope className="mr-2" size={16} />
                 Ask Doctor
               </Button>
             </div>

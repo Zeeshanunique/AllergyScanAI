@@ -9,6 +9,7 @@
     "check": "tsc"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.21.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@radix-ui/react-accordion": "^1.2.4",
@@ -58,7 +59,6 @@
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",
     "next-themes": "^0.4.6",
-    "openai": "^5.23.1",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",

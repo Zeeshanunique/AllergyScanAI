@@ -1,8 +1,13 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Initialize Google Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+if (!apiKey) {
+  console.warn('GOOGLE_GEMINI_API_KEY not found in environment variables');
+}
+
+const genAI = new GoogleGenerativeAI(apiKey || '');
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 
 export interface AnalysisResult {
   safe: boolean;
@@ -63,6 +68,10 @@ export async function analyzeIngredients(
   `;
 
   try {
+    if (!apiKey) {
+      throw new Error('GOOGLE_GEMINI_API_KEY is required');
+    }
+
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -74,6 +83,9 @@ export async function analyzeIngredients(
     return parsedResult as AnalysisResult;
   } catch (error) {
     console.error('Gemini analysis error:', error);
+    if (error instanceof Error && error.message.includes('API key')) {
+      throw new Error('Invalid or missing Google Gemini API key');
+    }
     throw new Error('Failed to analyze ingredients');
   }
 }
@@ -134,9 +146,32 @@ export async function chatWithAI(
     recommend consulting a healthcare professional.
     
     ${contextInfo ? 'IMPORTANT: Use the user context above to provide personalized, relevant advice.' : ''}
+    
+    FORMATTING INSTRUCTIONS:
+    - Use clear headings with **bold text** for main sections
+    - Use bullet points with • for lists
+    - Use numbered lists (1., 2., 3.) for step-by-step instructions
+    - Use line breaks between sections for better readability
+    - Keep paragraphs concise and easy to scan
+    - Use emojis sparingly but appropriately (🍳 for cooking, ⚠️ for warnings, etc.)
+    
+    Example format:
+    **Main Topic**
+    
+    • First bullet point
+    • Second bullet point
+    • Third bullet point
+    
+    **Next Section**
+    
+    More detailed explanation here...
   `;
 
   try {
+    if (!apiKey) {
+      throw new Error('GOOGLE_GEMINI_API_KEY is required');
+    }
+
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -144,6 +179,9 @@ export async function chatWithAI(
     return text || "I'm sorry, I couldn't process your request.";
   } catch (error) {
     console.error('Gemini chat error:', error);
+    if (error instanceof Error && error.message.includes('API key')) {
+      throw new Error('Invalid or missing Google Gemini API key');
+    }
     throw new Error('Failed to get AI response');
   }
 }

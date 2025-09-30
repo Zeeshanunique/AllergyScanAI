@@ -49,6 +49,25 @@ export interface ChatMessage {
   timestamp: Date;
 }
 
+export interface ConsultationHistory {
+  id: string;
+  userId: string;
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialty: string;
+  appointmentDate: Date;
+  appointmentTime: string;
+  consultationType: 'video' | 'phone' | 'chat';
+  scanResultId?: string | null;
+  reason: string;
+  status: 'scheduled' | 'completed' | 'cancelled' | 'no-show';
+  consultationFee: number;
+  notes?: string | null;
+  prescription?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // Validation schemas
 export const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username must be at most 20 characters"),
@@ -81,10 +100,22 @@ export const chatMessageSchema = z.object({
   message: z.string().min(1, "Message cannot be empty"),
 });
 
+export const consultationBookingSchema = z.object({
+  doctorId: z.string().min(1, "Doctor selection is required"),
+  appointmentDate: z.string().min(1, "Appointment date is required"),
+  appointmentTime: z.string().min(1, "Appointment time is required"),
+  consultationType: z.enum(['video', 'phone', 'chat'], {
+    required_error: "Consultation type is required",
+  }),
+  reason: z.string().min(1, "Reason for consultation is required"),
+  scanResultId: z.string().optional(),
+});
+
 // Insert types for data creation (removing Drizzle references)
 export type InsertUser = Omit<User, 'id' | 'createdAt' | 'updatedAt' | 'lastLoginAt'>;
 export type InsertScanHistory = Omit<ScanHistory, 'id' | 'scannedAt'>;
 export type InsertChatMessage = Omit<ChatMessage, 'id' | 'timestamp'>;
+export type InsertConsultationHistory = Omit<ConsultationHistory, 'id' | 'createdAt' | 'updatedAt'>;
 
 // Inferred types from schemas
 export type RegisterData = z.infer<typeof registerSchema>;
@@ -92,3 +123,4 @@ export type LoginData = z.infer<typeof loginSchema>;
 export type UpdateProfileData = z.infer<typeof updateProfileSchema>;
 export type ScanAnalysisData = z.infer<typeof scanAnalysisSchema>;
 export type ChatMessageData = z.infer<typeof chatMessageSchema>;
+export type ConsultationBookingData = z.infer<typeof consultationBookingSchema>;

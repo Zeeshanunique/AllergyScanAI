@@ -34,23 +34,37 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
     return () => {
       cleanup();
     };
-  }, [isOpen]);
+  }, [isOpen, hasPermission]); // Add hasPermission dependency
 
   const initializeScanner = async () => {
     try {
       console.log('Initializing barcode scanner...');
+      setError('');
+      // Only set to null if we don't already have permission
+      if (hasPermission !== true) {
+        setHasPermission(null);
+      }
+      setScanStatus('idle');
+
+      // Initialize code reader first
+      if (!codeReader.current) {
+        codeReader.current = new BrowserMultiFormatReader();
+        console.log('BrowserMultiFormatReader initialized');
+      }
+
       await startCamera();
-      
-      // Wait a moment for video to be ready, then start scanning
+
+      // Wait for video to be ready, then start scanning
       setTimeout(() => {
-        if (videoRef.current) {
+        if (videoRef.current && hasPermission) {
           console.log('Starting scanning after camera initialization...');
           startScanning();
         }
-      }, 1000);
+      }, 1500); // Increased delay for better camera readiness
     } catch (err) {
       console.error('Failed to initialize scanner:', err);
       setError(`Failed to initialize scanner: ${err instanceof Error ? err.message : String(err)}`);
+      setHasPermission(false);
     }
   };
 
@@ -65,14 +79,15 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
   const startCamera = async () => {
     try {
       console.log('Requesting camera access...');
+      setError('');
 
       // Check if mediaDevices is available
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera not supported by this browser');
       }
 
-      // Request camera with optimal settings for barcode scanning
-      const constraints = {
+      // First try with back camera, then front if it fails
+      let constraints = {
         video: {
           facingMode: "environment", // Use back camera
           width: { ideal: 1920, min: 640 },
@@ -81,62 +96,85 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
       };
 
       console.log('Getting user media with constraints:', constraints);
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (backCameraError) {
+        console.log('Back camera failed, trying front camera:', backCameraError);
+        // Fallback to front camera
+        constraints.video.facingMode = "user";
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      }
       streamRef.current = stream;
       console.log('Camera stream obtained successfully');
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          console.log('Video element set with stream');
-
-          // Ensure video is fully loaded and playing before scanning
-          await new Promise((resolve, reject) => {
-            if (videoRef.current) {
-              const video = videoRef.current;
-              
-              const onReady = () => {
-                console.log('Video ready for scanning:', {
-                  readyState: video.readyState,
-                  videoWidth: video.videoWidth,
-                  videoHeight: video.videoHeight,
-                  paused: video.paused
-                });
-                resolve(undefined);
-              };
-
-              // Wait for both metadata and can play events
-              let metadataLoaded = false;
-              let canPlay = false;
-
-              video.onloadedmetadata = () => {
-                console.log('Video metadata loaded');
-                metadataLoaded = true;
-                if (canPlay) onReady();
-              };
-
-              video.oncanplay = () => {
-                console.log('Video can play');
-                canPlay = true;
-                if (metadataLoaded) onReady();
-              };
-
-              video.onerror = (e) => {
-                console.error('Video error:', e);
-                reject(new Error('Video failed to load'));
-              };
-
-              // Ensure video starts playing
-              video.play().catch(err => {
-                console.warn('Video play failed (might be due to autoplay policy):', err);
-                // Continue anyway as some browsers block autoplay but still allow scanning
-              });
-            }
-          });
-        }
-
+      // Set permission to true since we got the stream
       setHasPermission(true);
-      setError("");
-      setScanStatus('idle');
+      setError('');
+
+      if (videoRef.current) {
+        const video = videoRef.current;
+        video.srcObject = stream;
+        console.log('Video element set with stream');
+
+        // Ensure video is fully loaded and playing before scanning
+        await new Promise((resolve, reject) => {
+          const onReady = () => {
+            console.log('Video ready for scanning:', {
+              readyState: video.readyState,
+              videoWidth: video.videoWidth,
+              videoHeight: video.videoHeight,
+              paused: video.paused
+            });
+            resolve(undefined);
+          };
+
+          // Wait for both metadata and can play events
+          let metadataLoaded = false;
+          let canPlay = false;
+
+          const checkReady = () => {
+            if (metadataLoaded && canPlay) {
+              onReady();
+            }
+          };
+
+          video.onloadedmetadata = () => {
+            console.log('Video metadata loaded');
+            metadataLoaded = true;
+            checkReady();
+          };
+
+          video.oncanplay = () => {
+            console.log('Video can play');
+            canPlay = true;
+            checkReady();
+          };
+
+          video.onerror = (e) => {
+            console.error('Video error:', e);
+            reject(new Error('Video failed to load'));
+          };
+
+          // Force video to load and play
+          video.load(); // Explicitly load the video
+          video.play().catch(err => {
+            console.warn('Video play failed (might be due to autoplay policy):', err);
+            // Continue anyway as some browsers block autoplay but still allow scanning
+          });
+
+          // Timeout fallback in case events don't fire
+          setTimeout(() => {
+            if (video.readyState >= 2) {
+              console.log('Video ready via timeout fallback');
+              resolve(undefined);
+            }
+          }, 3000);
+        });
+      } else {
+        throw new Error('Video element not available');
+      }
       console.log('Camera started successfully');
     } catch (err) {
       setHasPermission(false);
@@ -249,12 +287,9 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
         // Draw current video frame to canvas
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Get image data from canvas
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        
         // Try to decode from canvas
         try {
-          const result = await codeReader.current.decodeFromCanvas(canvas);
+          const result = codeReader.current.decodeFromCanvas(canvas);
           if (result) {
             console.log('🎉 Canvas barcode detected:', result.getText());
             const format = BarcodeFormat[result.getBarcodeFormat()];
@@ -298,24 +333,24 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
   };
 
   const handleScanSuccess = useCallback((barcode: string, format?: string) => {
-    console.log('🎉 Scan success handling started');
+    console.log('🎉 Scan success handling started for barcode:', barcode);
     setLastScanResult(barcode);
     setDetectedFormat(format || 'Unknown');
     setScanStatus('found');
     setIsScanning(false);
     stopScanning();
-    
+
     // Add haptic feedback if available
     if ('vibrate' in navigator) {
       navigator.vibrate([200, 100, 200]); // Success pattern
     }
-    
+
     // Show success state briefly, then close scanner and start analysis
     setTimeout(() => {
-      console.log('Closing scanner and starting analysis...');
-      onScan(barcode); // This will trigger the analysis
-      onClose(); // Auto-close the scanner immediately
-    }, 1000); // Reduced delay for faster UX
+      console.log('✅ Closing scanner and starting analysis for:', barcode);
+      onScan(barcode); // Start the analysis immediately
+      onClose(); // Close the scanner immediately after starting analysis
+    }, 600); // Reduced delay for faster UX
   }, [onScan, onClose]);
 
   const toggleFlashlight = async () => {
@@ -414,32 +449,37 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
 
         {/* Camera preview area */}
         <div className="absolute inset-0">
-          {hasPermission && !error ? (
-            <>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-                data-testid="camera-preview"
-              />
-              {/* Hidden canvas for image processing */}
-              <canvas
-                ref={canvasRef}
-                style={{ display: 'none' }}
-                data-testid="barcode-canvas"
-              />
-            </>
-          ) : (
+          {/* Always render video element but show/hide based on permission state */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`w-full h-full object-cover ${hasPermission === true && !error ? 'block' : 'hidden'}`}
+            data-testid="camera-preview"
+          />
+          {/* Hidden canvas for image processing */}
+          <canvas
+            ref={canvasRef}
+            style={{ display: 'none' }}
+            data-testid="barcode-canvas"
+          />
+
+          {/* Show permission request screen when needed */}
+          {(hasPermission !== true || error) && (
             <div className="w-full h-full bg-gray-900 flex items-center justify-center">
               <div className="text-white text-center max-w-sm mx-auto p-6">
                 <Camera className="w-16 h-16 mx-auto mb-4 text-white/50" />
-                <h3 className="text-xl font-semibold mb-2">Camera Access Needed</h3>
+                <h3 className="text-xl font-semibold mb-2">
+                  {hasPermission === null ? 'Requesting Camera Access...' : 'Camera Access Needed'}
+                </h3>
                 <p className="text-white/70 mb-6">
-                  {error || "Please allow camera access to scan barcodes"}
+                  {hasPermission === null
+                    ? "Setting up camera access..."
+                    : (error || "Please allow camera access to scan barcodes")
+                  }
                 </p>
-                {error && (
+                {error && hasPermission === false && (
                   <button
                     onClick={startCamera}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
@@ -515,7 +555,15 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
           </div>
 
           {/* Tips */}
-          <div className="mt-6 text-center">
+          <div className="mt-6 text-center space-y-2">
+            <div className="bg-blue-600/20 border border-blue-400/30 rounded-lg p-3">
+              <p className="text-blue-200 text-sm font-medium">
+                🎯 Demo Mode: Try scanning barcodes 101-120
+              </p>
+              <p className="text-blue-300/70 text-xs mt-1">
+                Sample products: 101=Peanut Cookies, 102=Granola Bar, 103=Yogurt, etc.
+              </p>
+            </div>
             <p className="text-white/60 text-sm">
               💡 Supports: UPC, EAN, QR Code, Code 128/39, Data Matrix & more
             </p>

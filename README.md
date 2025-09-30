@@ -20,7 +20,7 @@ This is a **development-only prototype** designed for demonstration and learning
 ### Core Functionality
 - **Barcode Scanning**: Real-time camera-based barcode scanning for instant product identification
 - **Manual Input**: Type ingredients manually for homemade or unlabeled foods
-- **AI Analysis**: OpenAI-powered ingredient analysis for allergen detection and drug interactions
+- **AI Analysis**: Google Gemini-powered ingredient analysis for allergen detection and drug interactions
 - **Personalized Safety**: User-specific allergen and medication profiles for tailored recommendations
 - **Development History**: In-memory scan tracking for testing (resets on restart)
 
@@ -50,7 +50,7 @@ This is a **development-only prototype** designed for demonstration and learning
 - **Node.js** with Express.js framework
 - **TypeScript** with ES modules for type safety
 - **In-memory storage** for development testing
-- **OpenAI API** for AI-powered food analysis
+- **Google Gemini API** for AI-powered food analysis
 
 ### Data Storage
 - **SQLite Database**: Lightweight, file-based database for development
@@ -62,7 +62,7 @@ This is a **development-only prototype** designed for demonstration and learning
 
 ### Prerequisites
 - Node.js 18+ and npm
-- OpenAI API key (optional - for AI analysis features)
+- Google Gemini API key (required - for AI analysis features)
 
 ### Installation
 
@@ -84,8 +84,8 @@ cp .env.example .env
 
 4. **Configure environment variables**
 ```env
-# OpenAI (Optional - for AI analysis)
-OPENAI_API_KEY=your_openai_api_key
+# Google Gemini (Required - for AI analysis)
+GOOGLE_GEMINI_API_KEY=your_gemini_api_key
 
 # Application
 PORT=5000
@@ -188,7 +188,7 @@ The application includes comprehensive features for testing:
 ### Testing Notes
 - **Data Persistence**: All data is saved to SQLite database and persists between server restarts
 - **Database Location**: Database file stored in `data/allergy-scan.db`
-- **Mock OpenAI**: If no API key is provided, mock responses are used
+- **Mock Gemini**: If no API key is provided, mock responses are used
 - **Camera Access**: Barcode scanning requires camera permissions
 - **Responsive Testing**: Test on different device sizes and orientations
 
@@ -232,11 +232,11 @@ Error: Connection failed
 - Ensure PostgreSQL is running
 - Verify network connectivity
 
-**OpenAI API Error**
+**Google Gemini API Error**
 ```bash
-Error: OpenAI API request failed
+Error: Gemini API request failed
 ```
-- Verify OPENAI_API_KEY is correct
+- Verify GOOGLE_GEMINI_API_KEY is correct
 - Check API usage limits
 - Ensure internet connectivity
 
@@ -261,7 +261,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- **OpenAI** for powerful AI analysis capabilities
+- **Google Gemini** for powerful AI analysis capabilities
 - **Radix UI** for accessible component primitives
 - **Tailwind CSS** for utility-first styling
 - **Drizzle ORM** for type-safe database operations

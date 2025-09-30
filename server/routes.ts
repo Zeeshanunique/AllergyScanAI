@@ -3,9 +3,10 @@ import "./env"; // Load environment variables first
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./database";
-import { registerSchema, loginSchema, updateProfileSchema } from "@shared/schema";
-import { analyzeIngredients, chatWithAI } from "./services/openai";
+import { registerSchema, loginSchema, updateProfileSchema, consultationBookingSchema } from "@shared/schema";
+import { analyzeIngredients, chatWithAI } from "./services/gemini";
 import { getBarcodeData, parseIngredientsText } from "./services/foodApi";
+import { sampleProducts } from "./seedData";
 import { processBarcodeScanAsync, processManualScanAsync, getJobResult, getQueueStats } from "./services/asyncProcessor";
 import { AuthService } from "./services/auth";
 import { requireAuth, optionalAuth, guestOnly, createSession, destroySession } from "./middleware/auth";
@@ -132,8 +133,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Barcode is required" });
       }
 
-      // Get product data from barcode
-      const productData = await getBarcodeData(barcode);
+      let productData;
+
+      // Check if it's one of our sample products (101-120)
+      const sampleProduct = sampleProducts.find(p => p.barcode === barcode);
+
+      if (sampleProduct) {
+        // Use sample product data
+        productData = {
+          productName: sampleProduct.productName,
+          ingredients: sampleProduct.ingredients,
+          barcode: sampleProduct.barcode,
+          source: "sample_database"
+        };
+        console.log(`Using sample product data for barcode ${barcode}:`, productData);
+      } else {
+        // Try to get product data from external API
+        try {
+          const externalData = await getBarcodeData(barcode);
+          productData = {
+            ...externalData,
+            source: "external_api"
+          };
+        } catch (apiError) {
+          console.error(`Failed to get data for barcode ${barcode} from external API:`, apiError);
+          return res.status(404).json({
+            message: "Product not found",
+            barcode,
+            suggestion: "Try using barcodes 101-120 for demo products"
+          });
+        }
+      }
 
       // Get user profile for analysis
       const user = await storage.getUser(req.userId!);
@@ -158,7 +188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       const scan = await storage.createScanHistory(scanData);
-      
+
       res.json({
         scan,
         productData,
@@ -390,7 +420,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Message is required" });
       }
 
-      const response = await chatWithAI(message, req.userId!);
+      // Get user context for personalization
+      const user = await storage.getUser(req.userId!);
+      const recentScans = await storage.getRecentScans(req.userId!, 3); // Get last 3 scans
+
+      const userContext = user ? {
+        firstName: user.firstName || undefined,
+        allergies: user.allergies || [],
+        medications: user.medications || [],
+        recentScans: recentScans.map(scan => ({
+          productName: scan.productName || undefined,
+          ingredients: scan.ingredients,
+          analysisResult: scan.analysisResult,
+          scannedAt: scan.scannedAt || new Date()
+        }))
+      } : undefined;
+
+      const response = await chatWithAI(message, req.userId!, userContext);
 
       // Save chat to history
       const chatData = {
@@ -432,6 +478,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       res.status(500).json({ message: "Failed to get chat history" });
+    }
+  });
+
+  // Consultation booking and history endpoints
+  app.post("/api/consultations", requireAuth, async (req, res) => {
+    try {
+      const bookingData = consultationBookingSchema.parse(req.body);
+
+      // Create consultation record
+      const consultationData = {
+        userId: req.userId!,
+        doctorId: bookingData.doctorId,
+        doctorName: req.body.doctorName || "Unknown Doctor",
+        doctorSpecialty: req.body.doctorSpecialty || "General Medicine",
+        appointmentDate: new Date(bookingData.appointmentDate),
+        appointmentTime: bookingData.appointmentTime,
+        consultationType: bookingData.consultationType,
+        scanResultId: bookingData.scanResultId,
+        reason: bookingData.reason,
+        status: 'scheduled' as const,
+        consultationFee: req.body.consultationFee || 0,
+        notes: null,
+        prescription: null
+      };
+
+      const consultation = await storage.createConsultation(consultationData);
+
+      res.status(201).json({
+        consultation,
+        message: "Consultation booked successfully"
+      });
+    } catch (error) {
+      console.error('Consultation booking error:', error);
+      res.status(400).json({
+        message: "Failed to book consultation",
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
+  app.get("/api/consultations", requireAuth, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || undefined;
+      const offset = parseInt(req.query.offset as string) || undefined;
+      const status = req.query.status as string;
+
+      let consultations;
+      if (status) {
+        consultations = await storage.getConsultationsByStatus(req.userId!, status);
+      } else if (limit !== undefined && offset !== undefined) {
+        consultations = await storage.getConsultationHistoryPaginated(req.userId!, limit, offset);
+      } else if (limit !== undefined) {
+        consultations = await storage.getRecentConsultations(req.userId!, limit);
+      } else {
+        consultations = await storage.getConsultationHistory(req.userId!);
+      }
+
+      // Include total count for pagination
+      const totalCount = await storage.getConsultationCount(req.userId!);
+
+      res.json({
+        consultations,
+        totalCount,
+        hasMore: offset !== undefined ? (offset + (limit || 0)) < totalCount : false
+      });
+    } catch (error) {
+      console.error('Get consultations error:', error);
+      res.status(500).json({ message: "Failed to get consultation history" });
+    }
+  });
+
+  app.get("/api/consultations/upcoming", requireAuth, async (req, res) => {
+    try {
+      const upcomingConsultations = await storage.getUpcomingConsultations(req.userId!);
+      res.json({ consultations: upcomingConsultations });
+    } catch (error) {
+      console.error('Get upcoming consultations error:', error);
+      res.status(500).json({ message: "Failed to get upcoming consultations" });
+    }
+  });
+
+  app.get("/api/consultations/:consultationId", requireAuth, async (req, res) => {
+    try {
+      const consultation = await storage.getConsultationById(req.params.consultationId);
+      if (!consultation) {
+        return res.status(404).json({ message: "Consultation not found" });
+      }
+
+      // Only allow users to access their own consultations
+      if (consultation.userId !== req.userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      res.json(consultation);
+    } catch (error) {
+      console.error('Get consultation details error:', error);
+      res.status(500).json({ message: "Failed to get consultation details" });
+    }
+  });
+
+  app.put("/api/consultations/:consultationId/status", requireAuth, async (req, res) => {
+    try {
+      const { status } = req.body;
+
+      if (!['scheduled', 'completed', 'cancelled', 'no-show'].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const consultation = await storage.getConsultationById(req.params.consultationId);
+      if (!consultation) {
+        return res.status(404).json({ message: "Consultation not found" });
+      }
+
+      // Only allow users to update their own consultations
+      if (consultation.userId !== req.userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const updatedConsultation = await storage.updateConsultationStatus(req.params.consultationId, status);
+      res.json(updatedConsultation);
+    } catch (error) {
+      console.error('Update consultation status error:', error);
+      res.status(500).json({ message: "Failed to update consultation status" });
+    }
+  });
+
+  app.put("/api/consultations/:consultationId/notes", requireAuth, async (req, res) => {
+    try {
+      const { notes, prescription } = req.body;
+
+      const consultation = await storage.getConsultationById(req.params.consultationId);
+      if (!consultation) {
+        return res.status(404).json({ message: "Consultation not found" });
+      }
+
+      // Only allow users to update their own consultations
+      if (consultation.userId !== req.userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const updatedConsultation = await storage.updateConsultationNotes(
+        req.params.consultationId,
+        notes || "",
+        prescription
+      );
+      res.json(updatedConsultation);
+    } catch (error) {
+      console.error('Update consultation notes error:', error);
+      res.status(500).json({ message: "Failed to update consultation notes" });
     }
   });
 

@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { ManualInput } from "@/components/manual-input";
 import { AnalysisResults } from "@/components/analysis-results";
+import { DoctorConsultation } from "@/components/doctor-consultation";
 import { AIChatbot, AIChatbotButton } from "@/components/ai-chatbot";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ export default function Home() {
   const [manualInputOpen, setManualInputOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [chatbotOpen, setChatbotOpen] = useState(false);
+  const [doctorConsultationOpen, setDoctorConsultationOpen] = useState(false);
   const [currentResult, setCurrentResult] = useState<ScanHistory | null>(null);
 
   const { toast } = useToast();
@@ -358,13 +360,22 @@ export default function Home() {
           result={currentResult}
           onSave={() => {}}
           onShare={() => {}}
-          onConsultDoctor={() => {}}
+          onConsultDoctor={() => {
+            setResultsOpen(false);
+            setDoctorConsultationOpen(true);
+          }}
         />
       )}
 
       <AIChatbot
         isOpen={chatbotOpen}
         onClose={() => setChatbotOpen(false)}
+      />
+
+      <DoctorConsultation
+        isOpen={doctorConsultationOpen}
+        onClose={() => setDoctorConsultationOpen(false)}
+        scanResult={currentResult}
       />
 
       <AIChatbotButton onClick={() => setChatbotOpen(true)} />

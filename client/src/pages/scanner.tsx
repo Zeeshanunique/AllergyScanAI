@@ -2,6 +2,7 @@ import { useState } from "react";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { ManualInput } from "@/components/manual-input";
 import { AnalysisResults } from "@/components/analysis-results";
+import { DoctorConsultation } from "@/components/doctor-consultation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Camera, Edit, History, Zap, Scan, FileText, QrCode, Clock, CheckCircle, AlertTriangle, Sparkles } from "lucide-react";
@@ -15,6 +16,7 @@ export default function Scanner() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [manualInputOpen, setManualInputOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
+  const [doctorConsultationOpen, setDoctorConsultationOpen] = useState(false);
   const [currentResult, setCurrentResult] = useState<ScanHistory | null>(null);
   const [analysisStep, setAnalysisStep] = useState<'idle' | 'scanning' | 'processing' | 'analyzing' | 'complete'>('idle');
   const [scannedBarcode, setScannedBarcode] = useState<string>('');
@@ -155,13 +157,13 @@ export default function Scanner() {
   };
 
   const handleConsultDoctor = () => {
-    toast({
-      title: "Doctor Consultation",
-      description: "This would open doctor consultation booking",
-    });
+    setResultsOpen(false);
+    setDoctorConsultationOpen(true);
   };
 
+
   return (
+    <>
     <div className="min-h-screen py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
       {/* Header */}
@@ -189,6 +191,12 @@ export default function Scanner() {
             <span>Choose Scanning Method</span>
           </CardTitle>
           <p className="text-muted-foreground">Select your preferred way to analyze food safety</p>
+          <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+            <p className="text-sm text-blue-800 dark:text-blue-200 font-medium flex items-center">
+              <Sparkles className="w-4 h-4 mr-2" />
+              Demo Mode: Scan barcodes 101-120 for sample products!
+            </p>
+          </div>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Barcode Scanner */}
@@ -199,7 +207,7 @@ export default function Scanner() {
               </div>
               <h3 className="text-xl font-bold mb-2 text-green-900 dark:text-green-100">Scan Barcode</h3>
               <p className="text-sm text-green-700 dark:text-green-300 mb-6">
-                Point your camera at the product barcode for instant ingredient analysis powered by AI
+                Point your camera at product barcodes for instant ingredient analysis. Try demo barcodes 101-120!
               </p>
               <Button
                 onClick={() => setScannerOpen(true)}
@@ -387,9 +395,16 @@ export default function Scanner() {
                   {analysisStep === 'complete' && 'Analysis completed successfully!'}
                 </p>
                 {scannedBarcode && (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
-                    Barcode: {scannedBarcode}
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                      Barcode: {scannedBarcode}
+                    </p>
+                    {['101', '102', '103', '104', '105', '106', '107', '108', '109', '110', '111', '112', '113', '114', '115', '116', '117', '118', '119', '120'].includes(scannedBarcode) && (
+                      <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 px-2 py-1 rounded">
+                        🎯 Demo Product Detected
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -431,6 +446,13 @@ export default function Scanner() {
         onShare={handleShareResult}
         onConsultDoctor={handleConsultDoctor}
       />
+
+      <DoctorConsultation
+        isOpen={doctorConsultationOpen}
+        onClose={() => setDoctorConsultationOpen(false)}
+        scanResult={currentResult}
+      />
     </div>
+    </>
   );
 }

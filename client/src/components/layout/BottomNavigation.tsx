@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Home, Scan, History, User, Plus } from "lucide-react";
+import { Home, Scan, History, User, Plus, Stethoscope } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function BottomNavigation() {
@@ -26,6 +26,12 @@ export function BottomNavigation() {
       icon: History,
       label: "History",
       color: "from-orange-500 to-red-600"
+    },
+    {
+      path: "/consultations",
+      icon: Stethoscope,
+      label: "Doctors",
+      color: "from-blue-500 to-cyan-600"
     },
     {
       path: "/profile",

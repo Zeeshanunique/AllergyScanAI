@@ -1,4 +1,4 @@
-import { analyzeIngredients, type AnalysisResult } from "./openai";
+import { analyzeIngredients, type AnalysisResult } from "./gemini";
 import { getBarcodeData } from "./foodApi";
 import { storage } from "../database";
 
