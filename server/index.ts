@@ -12,8 +12,8 @@ const app = express();
 app.use(securityHeaders);
 app.use(corsConfig);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 // Development-only: No session middleware needed for token-based auth
 

@@ -39,8 +39,13 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Authentication required" });
   }
 
+  console.log('Checking token:', token.substring(0, 10) + '...');
+  console.log('Active sessions count:', activeSessions.size);
+  console.log('Available tokens:', Array.from(activeSessions.keys()).map(t => t.substring(0, 10) + '...'));
+
   const user = getSessionUser(token);
   if (!user) {
+    console.log('Token not found in active sessions');
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 

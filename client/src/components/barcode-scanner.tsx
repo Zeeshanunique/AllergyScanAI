@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, Flashlight, CheckCircle, AlertCircle, Camera, ScanLine, RotateCw } from "lucide-react";
-import { BrowserMultiFormatReader } from '@zxing/browser';
-import { Result, NotFoundException, BarcodeFormat } from '@zxing/library';
+// Removed Tesseract OCR - now using Gemini Vision API
 
 interface BarcodeScannerProps {
   isOpen: boolean;
@@ -16,11 +15,11 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
   const [flashlightOn, setFlashlightOn] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'found' | 'error'>('idle');
+  const [manualScanTriggered, setManualScanTriggered] = useState(false);
   const [lastScanResult, setLastScanResult] = useState<string>("");
-  const [detectedFormat, setDetectedFormat] = useState<string>("");
+  const [detectedFormat, setDetectedFormat] = useState<string>("Gemini Vision");
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const codeReader = useRef<BrowserMultiFormatReader | null>(null);
   const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -34,11 +33,11 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
     return () => {
       cleanup();
     };
-  }, [isOpen, hasPermission]); // Add hasPermission dependency
+  }, [isOpen]); // Remove hasPermission dependency to avoid infinite loops
 
   const initializeScanner = async () => {
     try {
-      console.log('Initializing barcode scanner...');
+      console.log('Initializing Gemini Vision scanner...');
       setError('');
       // Only set to null if we don't already have permission
       if (hasPermission !== true) {
@@ -46,21 +45,10 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
       }
       setScanStatus('idle');
 
-      // Initialize code reader first
-      if (!codeReader.current) {
-        codeReader.current = new BrowserMultiFormatReader();
-        console.log('BrowserMultiFormatReader initialized');
-      }
-
       await startCamera();
 
-      // Wait for video to be ready, then start scanning
-      setTimeout(() => {
-        if (videoRef.current && hasPermission) {
-          console.log('Starting scanning after camera initialization...');
-          startScanning();
-        }
-      }, 1500); // Increased delay for better camera readiness
+      // Camera is ready, but don't auto-start scanning
+      console.log('Camera initialized successfully. Ready for manual Gemini Vision scan.');
     } catch (err) {
       console.error('Failed to initialize scanner:', err);
       setError(`Failed to initialize scanner: ${err instanceof Error ? err.message : String(err)}`);
@@ -202,143 +190,140 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
     }
 
     const video = videoRef.current;
+    
+    // Clear any previous errors
+    setError('');
+
+    // Wait a moment for video to be ready, then check
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     // Check if video is ready for scanning
     if (video.readyState < 2) {
       console.log('Video not ready yet, readyState:', video.readyState);
-      // Wait a bit and try again
-      setTimeout(() => startScanning(), 500);
+      setError('Camera not ready yet. Please wait a moment and try again.');
+      setScanStatus('error');
+      setIsScanning(false);
+      setManualScanTriggered(false);
       return;
     }
 
     if (video.videoWidth === 0 || video.videoHeight === 0) {
       console.log('Video dimensions not available yet:', { width: video.videoWidth, height: video.videoHeight });
-      setTimeout(() => startScanning(), 500);
+      setError('Camera not ready yet. Please wait a moment and try again.');
+      setScanStatus('error');
+      setIsScanning(false);
+      setManualScanTriggered(false);
       return;
     }
 
     try {
-      console.log('Starting barcode scanning...');
-      console.log('Video element state:', {
-        readyState: video.readyState,
-        videoWidth: video.videoWidth,
-        videoHeight: video.videoHeight,
-        paused: video.paused,
-        currentTime: video.currentTime
-      });
-
+      console.log('Starting Gemini Vision scan...');
       setIsScanning(true);
       setScanStatus('scanning');
+      setError('');
+      setManualScanTriggered(true);
 
-      // Initialize the code reader if not already done
-      if (!codeReader.current) {
-        console.log('Initializing BrowserMultiFormatReader...');
-        codeReader.current = new BrowserMultiFormatReader();
-        console.log('BrowserMultiFormatReader initialized');
+      // Create a canvas to capture frames
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        throw new Error('Canvas not available');
       }
 
-      console.log('Starting continuous decode from video device...');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas context not available');
+      }
+
+      // Set canvas size to match the scanning frame area (reduced size for smaller payload)
+      const frameWidth = 480;  // Reduced from 640 for smaller payload
+      const frameHeight = 288; // Reduced from 384 for smaller payload
+      canvas.width = frameWidth;
+      canvas.height = frameHeight;
+
+      // Calculate the center area of the video to crop
+      const centerX = (video.videoWidth - frameWidth) / 2;
+      const centerY = (video.videoHeight - frameHeight) / 2;
+
+      // Draw only the center area of the video frame to canvas (cropped to scanning frame)
+      ctx.drawImage(
+        video, 
+        centerX, centerY, frameWidth, frameHeight,  // Source area (cropped from video)
+        0, 0, frameWidth, frameHeight              // Destination area (full canvas)
+      );
       
-      // Try direct video scanning first
-      try {
-        await codeReader.current.decodeFromVideoDevice(undefined, video, (result, error) => {
-          if (result) {
-            console.log('🎉 Barcode detected:', result.getText(), 'Format:', BarcodeFormat[result.getBarcodeFormat()]);
-            const format = BarcodeFormat[result.getBarcodeFormat()];
-            handleScanSuccess(result.getText(), format);
-          } else if (error && !(error instanceof NotFoundException)) {
-            console.warn('Scan error (non-critical):', error.message);
-          }
-        });
-        console.log('✅ Direct video scanning started');
-      } catch (directScanError) {
-        console.warn('Direct video scan failed, trying canvas method:', directScanError);
-        // Fallback to manual canvas scanning
-        startCanvasScanning();
+      // Convert canvas to base64 image for Gemini Vision API (reduced quality for smaller payload)
+      const imageData = canvas.toDataURL('image/jpeg', 0.7);
+      console.log('Sending image to Gemini Vision API for barcode extraction...');
+      console.log('Image data length:', imageData.length);
+      console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
+      
+      // Send image to server for Gemini Vision processing (no auth required)
+      const response = await fetch('/api/scan-barcode-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ imageData })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to process image');
       }
+
+      const result = await response.json();
+      console.log('Gemini Vision API response:', result);
+
+      if (result.barcode) {
+        console.log('🎉 Barcode detected via Gemini Vision:', result.barcode);
+        handleScanSuccess(result.barcode, 'Gemini Vision');
+        return;
+      } else {
+        console.log('No barcode detected by Gemini Vision');
+        setError('No barcode detected. Please ensure the barcode numbers are clearly visible in the center of the frame.');
+        setScanStatus('error');
+        setIsScanning(false);
+        setManualScanTriggered(false);
+      }
+
     } catch (err) {
-      console.error('❌ Critical scan error:', err);
+      console.error('Failed to start Gemini Vision scanning:', err);
+      setError(`Gemini Vision scanning failed: ${err instanceof Error ? err.message : String(err)}`);
       setScanStatus('error');
-      setError(`Scanning failed: ${err instanceof Error ? err.message : String(err)}`);
       setIsScanning(false);
+      setManualScanTriggered(false);
     }
   };
 
-  const startCanvasScanning = () => {
-    console.log('Starting canvas-based scanning...');
-    
-    const scanInterval = setInterval(async () => {
-      if (!isScanning || !videoRef.current || !canvasRef.current || !codeReader.current) {
-        clearInterval(scanInterval);
-        return;
-      }
-
-      try {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        
-        if (!ctx) return;
-
-        // Set canvas size to match video
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-
-        // Draw current video frame to canvas
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        // Try to decode from canvas
-        try {
-          const result = codeReader.current.decodeFromCanvas(canvas);
-          if (result) {
-            console.log('🎉 Canvas barcode detected:', result.getText());
-            const format = BarcodeFormat[result.getBarcodeFormat()];
-            clearInterval(scanInterval);
-            handleScanSuccess(result.getText(), format);
-          }
-        } catch (err) {
-          // Ignore NotFoundException - normal when no barcode is found
-          if (!(err instanceof NotFoundException)) {
-            console.warn('Canvas scan error:', err);
-          }
-        }
-      } catch (err) {
-        console.error('Canvas scanning error:', err);
-      }
-    }, 200); // Scan every 200ms
-
-    // Store interval reference for cleanup
-    scanTimeoutRef.current = scanInterval as any;
-  };
 
   const stopScanning = () => {
-    console.log('Stopping barcode scanning...');
     setIsScanning(false);
-    
-    // Properly stop the scanning process
-    if (codeReader.current) {
-      try {
-        // Create a new instance to effectively stop scanning
-        codeReader.current = new BrowserMultiFormatReader();
-        console.log('Scanner reset successfully');
-      } catch (err) {
-        console.log('Stop scanning error (non-critical):', err);
-      }
-    }
     
     if (scanTimeoutRef.current) {
       clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = null;
     }
+    
+    setScanStatus('idle');
   };
 
   const handleScanSuccess = useCallback((barcode: string, format?: string) => {
-    console.log('🎉 Scan success handling started for barcode:', barcode);
+    console.log('🎉 Scan success handling started for barcode:', barcode, 'format:', format);
+    
+    // Validate that this is a valid product barcode (not URL)
+    if (!isValidProductBarcode(barcode)) {
+      console.log('❌ Rejected non-product barcode:', barcode);
+      setError('Please scan a product barcode (not QR codes with URLs).');
+      setScanStatus('error');
+      setIsScanning(false);
+      setManualScanTriggered(false);
+      return;
+    }
+    
     setLastScanResult(barcode);
-    setDetectedFormat(format || 'Unknown');
+    setDetectedFormat(format || 'Product Barcode');
     setScanStatus('found');
     setIsScanning(false);
-    stopScanning();
 
     // Add haptic feedback if available
     if ('vibrate' in navigator) {
@@ -352,6 +337,40 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
       onClose(); // Close the scanner immediately after starting analysis
     }, 600); // Reduced delay for faster UX
   }, [onScan, onClose]);
+
+  // Removed extractThirteenDigitCodes function - now using Gemini Vision API
+
+  // Validate that the scanned code is a valid product barcode (not URL)
+  const isValidProductBarcode = (text: string): boolean => {
+    const cleanText = text.trim();
+    
+    // Reject URLs
+    if (cleanText.startsWith('http://') || cleanText.startsWith('https://')) {
+      return false;
+    }
+    
+    // Reject email addresses
+    if (cleanText.includes('@') && cleanText.includes('.')) {
+      return false;
+    }
+    
+    // Reject QR codes with URLs
+    if (cleanText.includes('://') || cleanText.includes('www.')) {
+      return false;
+    }
+    
+    // Accept numeric barcodes (EAN-13, UPC, etc.)
+    if (/^\d{8,14}$/.test(cleanText)) {
+      return true;
+    }
+    
+    // Accept alphanumeric codes that look like product codes
+    if (/^[A-Za-z0-9]{6,20}$/.test(cleanText) && !cleanText.includes('://')) {
+      return true;
+    }
+    
+    return false;
+  };
 
   const toggleFlashlight = async () => {
     if (streamRef.current) {
@@ -374,15 +393,8 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
     setScanStatus('idle');
     setLastScanResult("");
     setDetectedFormat("");
-    if (hasPermission && videoRef.current) {
-      startScanning();
-    } else {
-      startCamera().then(() => {
-        if (videoRef.current) {
-          startScanning();
-        }
-      });
-    }
+    setManualScanTriggered(false);
+    // Don't auto-start scanning, wait for manual trigger
   };
 
   const getScanStatusColor = () => {
@@ -405,10 +417,10 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
 
   const getScanStatusText = () => {
     switch (scanStatus) {
-      case 'scanning': return 'Scanning for barcodes...';
-      case 'found': return `Found ${detectedFormat || 'barcode'}`;
-      case 'error': return 'Scan failed - try again';
-      default: return 'Position barcode in the frame';
+      case 'scanning': return 'Reading text with OCR...';
+      case 'found': return `Found 13-digit code`;
+      case 'error': return 'OCR failed - try again';
+      default: return 'Position barcode numbers in the frame';
     }
   };
 
@@ -447,9 +459,10 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
           </div>
         </div>
 
-        {/* Camera preview area */}
-        <div className="absolute inset-0">
-          {/* Always render video element but show/hide based on permission state */}
+        {/* Camera preview area - only show scanning frame */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          {/* Only show the scanning frame area of the camera */}
+          <div className="relative w-80 h-48 overflow-hidden rounded-lg">
           <video
             ref={videoRef}
             autoPlay
@@ -457,7 +470,12 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
             muted
             className={`w-full h-full object-cover ${hasPermission === true && !error ? 'block' : 'hidden'}`}
             data-testid="camera-preview"
+              style={{
+                transform: 'scale(1.5)', // Zoom in to show only center area
+                transformOrigin: 'center'
+              }}
           />
+          </div>
           {/* Hidden canvas for image processing */}
           <canvas
             ref={canvasRef}
@@ -466,8 +484,9 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
           />
 
           {/* Show permission request screen when needed */}
-          {(hasPermission !== true || error) && (
-            <div className="w-full h-full bg-gray-900 flex items-center justify-center">
+          {/* Camera Access Screen - only show when permission is actually needed */}
+          {hasPermission !== true && !error && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
               <div className="text-white text-center max-w-sm mx-auto p-6">
                 <Camera className="w-16 h-16 mx-auto mb-4 text-white/50" />
                 <h3 className="text-xl font-semibold mb-2">
@@ -476,10 +495,10 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
                 <p className="text-white/70 mb-6">
                   {hasPermission === null
                     ? "Setting up camera access..."
-                    : (error || "Please allow camera access to scan barcodes")
+                    : "Please allow camera access to scan barcodes"
                   }
                 </p>
-                {error && hasPermission === false && (
+                {hasPermission === false && (
                   <button
                     onClick={startCamera}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
@@ -492,28 +511,56 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
               </div>
             </div>
           )}
+
+          {/* Error Message Overlay - show when there's a scanning error */}
+          {error && hasPermission === true && (
+            <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10">
+              <div className="bg-white dark:bg-gray-800 rounded-lg p-6 mx-4 max-w-sm">
+                <div className="text-center">
+                  <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+                  <h3 className="text-lg font-semibold mb-2 text-gray-900 dark:text-white">
+                    Scanning Error
+                  </h3>
+                  <p className="text-gray-600 dark:text-gray-300 mb-4">
+                    {error}
+                  </p>
+                  <button
+                    onClick={handleRetryScanning}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         
-        {/* Scanning overlay */}
+        {/* Scanning overlay - positioned over the video frame */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          {/* Scanning frame */}
-          <div className={`relative w-64 h-40 border-2 rounded-lg transition-all duration-300 ${getScanStatusColor()}`}>
+          {/* Scanning frame overlay */}
+          <div className={`relative w-80 h-48 border-4 rounded-lg transition-all duration-300 ${getScanStatusColor()}`}>
             {/* Corner indicators */}
-            <div className="absolute -top-1 -left-1 w-6 h-6 border-l-4 border-t-4 border-white rounded-tl-lg"></div>
-            <div className="absolute -top-1 -right-1 w-6 h-6 border-r-4 border-t-4 border-white rounded-tr-lg"></div>
-            <div className="absolute -bottom-1 -left-1 w-6 h-6 border-l-4 border-b-4 border-white rounded-bl-lg"></div>
-            <div className="absolute -bottom-1 -right-1 w-6 h-6 border-r-4 border-b-4 border-white rounded-br-lg"></div>
+            <div className="absolute -top-2 -left-2 w-8 h-8 border-l-4 border-t-4 border-white rounded-tl-lg"></div>
+            <div className="absolute -top-2 -right-2 w-8 h-8 border-r-4 border-t-4 border-white rounded-tr-lg"></div>
+            <div className="absolute -bottom-2 -left-2 w-8 h-8 border-l-4 border-b-4 border-white rounded-bl-lg"></div>
+            <div className="absolute -bottom-2 -right-2 w-8 h-8 border-r-4 border-b-4 border-white rounded-br-lg"></div>
             
             {/* Scanning line animation */}
             {scanStatus === 'scanning' && (
               <div className="absolute inset-0 overflow-hidden rounded-lg">
-                <div className="absolute w-full h-0.5 bg-gradient-to-r from-transparent via-blue-400 to-transparent animate-bounce"></div>
+                <div className="absolute w-full h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent animate-bounce"></div>
               </div>
             )}
 
             {/* Center status icon */}
             <div className="absolute inset-0 flex items-center justify-center">
               {getScanStatusIcon()}
+            </div>
+            
+            {/* Frame label */}
+            <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-white text-sm font-medium bg-black/50 px-3 py-1 rounded">
+              Position barcode here
             </div>
           </div>
         </div>
@@ -533,6 +580,19 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
 
           {/* Action buttons */}
           <div className="flex items-center justify-center space-x-4">
+            {/* Manual Scan Button */}
+            {scanStatus === 'idle' && !manualScanTriggered && (
+              <button
+                onClick={startScanning}
+                className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+                data-testid="button-scan"
+              >
+          <ScanLine className="w-4 h-4 mr-2 inline" />
+          Scan with Gemini Vision
+              </button>
+            )}
+            
+            {/* Retry Button */}
             {scanStatus === 'error' && (
               <button
                 onClick={handleRetryScanning}
@@ -540,10 +600,11 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
                 data-testid="button-retry-scan"
               >
                 <RotateCw className="w-4 h-4 mr-2 inline" />
-                Retry Scan
+                Try Again
               </button>
             )}
             
+            {/* Manual Input Button */}
             <button
               onClick={onManualInput}
               className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
@@ -558,15 +619,19 @@ export function BarcodeScanner({ isOpen, onClose, onScan, onManualInput }: Barco
           <div className="mt-6 text-center space-y-2">
             <div className="bg-blue-600/20 border border-blue-400/30 rounded-lg p-3">
               <p className="text-blue-200 text-sm font-medium">
-                🎯 Demo Mode: Try scanning barcodes 101-120
+                💡 Only the area inside the white frame will be scanned
               </p>
-              <p className="text-blue-300/70 text-xs mt-1">
-                Sample products: 101=Peanut Cookies, 102=Granola Bar, 103=Yogurt, etc.
+            </div>
+            <div className="bg-green-600/20 border border-green-400/30 rounded-lg p-3">
+              <p className="text-green-200 text-sm font-medium">
+                ✅ Position barcode numbers inside the frame, then click "Scan with Gemini Vision"
               </p>
             </div>
             <p className="text-white/60 text-sm">
-              💡 Supports: UPC, EAN, QR Code, Code 128/39, Data Matrix & more
+              📱 Gemini Vision detects 13-digit product codes from barcode labels
             </p>
+            
+            {/* Debug button removed - now using Gemini Vision API */}
           </div>
         </div>
       </div>

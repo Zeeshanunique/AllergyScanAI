@@ -194,7 +194,7 @@ export default function Scanner() {
           <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
             <p className="text-sm text-blue-800 dark:text-blue-200 font-medium flex items-center">
               <Sparkles className="w-4 h-4 mr-2" />
-              Demo Mode: Scan barcodes 101-120 for sample products!
+              Scan any real barcode to analyze product ingredients and allergens!
             </p>
           </div>
         </CardHeader>

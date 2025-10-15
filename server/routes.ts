@@ -4,10 +4,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./database";
 import { registerSchema, loginSchema, updateProfileSchema, consultationBookingSchema } from "@shared/schema";
-import { analyzeIngredients, chatWithAI } from "./services/gemini";
+import { analyzeIngredients, chatWithAI, extractBarcodeFromImage } from "./services/gemini";
 import { getBarcodeData, parseIngredientsText } from "./services/foodApi";
-import { sampleProducts } from "./seedData";
-import { processBarcodeScanAsync, processManualScanAsync, getJobResult, getQueueStats } from "./services/asyncProcessor";
 import { AuthService } from "./services/auth";
 import { requireAuth, optionalAuth, guestOnly, createSession, destroySession } from "./middleware/auth";
 import { authRateLimit, apiRateLimit, scanRateLimit, heavyOperationsRateLimit } from "./middleware/security";
@@ -135,34 +133,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let productData;
 
-      // Check if it's one of our sample products (101-120)
-      const sampleProduct = sampleProducts.find(p => p.barcode === barcode);
-
-      if (sampleProduct) {
-        // Use sample product data
+      // Get product data from Barcode Lookup API
+      try {
+        const externalData = await getBarcodeData(barcode);
         productData = {
-          productName: sampleProduct.productName,
-          ingredients: sampleProduct.ingredients,
-          barcode: sampleProduct.barcode,
-          source: "sample_database"
+          ...externalData,
+          barcode,
+          source: "barcode_lookup_api"
         };
-        console.log(`Using sample product data for barcode ${barcode}:`, productData);
-      } else {
-        // Try to get product data from external API
-        try {
-          const externalData = await getBarcodeData(barcode);
-          productData = {
-            ...externalData,
-            source: "external_api"
-          };
-        } catch (apiError) {
-          console.error(`Failed to get data for barcode ${barcode} from external API:`, apiError);
-          return res.status(404).json({
-            message: "Product not found",
-            barcode,
-            suggestion: "Try using barcodes 101-120 for demo products"
-          });
+        console.log(`Retrieved product data from Barcode Lookup API for barcode ${barcode}:`, {
+          productName: productData.productName,
+          brand: productData.brand,
+          category: productData.category,
+          ingredientCount: productData.ingredients?.length || 0
+        });
+      } catch (apiError) {
+        console.error(`Failed to get data for barcode ${barcode} from Barcode Lookup API:`, apiError);
+        
+        // Provide specific error messages based on error type
+        let errorMessage = "Product not found";
+        let suggestion = "Ensure the barcode is valid and exists in the Barcode Lookup database";
+        
+        if (apiError instanceof Error) {
+          if (apiError.message.includes('Invalid barcode format')) {
+            errorMessage = "Invalid barcode format";
+            suggestion = "Please scan a valid product barcode (UPC, EAN, ISBN, etc.). QR codes with URLs are not supported.";
+          } else if (apiError.message.includes('API request failed')) {
+            errorMessage = "API request failed";
+            suggestion = "There was an issue connecting to the barcode database. Please try again.";
+          } else if (apiError.message.includes('Product not found')) {
+            errorMessage = "Product not found";
+            suggestion = "This barcode is not in our database. Try scanning a different product.";
+          }
         }
+        
+        return res.status(404).json({
+          message: errorMessage,
+          barcode,
+          error: apiError instanceof Error ? apiError.message : String(apiError),
+          suggestion
+        });
       }
 
       // Get user profile for analysis
@@ -173,7 +183,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Analyze ingredients
       const analysisResult = await analyzeIngredients(
-        productData.ingredients,
+        {
+          productName: productData.productName,
+          brand: productData.brand,
+          ingredients: productData.ingredients,
+          category: productData.category,
+          description: productData.description,
+          allergens: productData.allergens
+        },
         user.allergies || [],
         user.medications || []
       );
@@ -222,7 +239,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Analyze ingredients
       const analysisResult = await analyzeIngredients(
-        parsedIngredients,
+        {
+          productName: productName || "Manual Entry",
+          brand: undefined,
+          ingredients: parsedIngredients,
+          category: undefined,
+          description: undefined,
+          allergens: undefined
+        },
         user.allergies || [],
         user.medications || []
       );
@@ -247,107 +271,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Async barcode scanning - returns immediately with job ID
-  app.post("/api/scan/barcode/async", scanRateLimit, heavyOperationsRateLimit, requireAuth, async (req, res) => {
+  // Image-based barcode scanning using Gemini Vision API (no auth required)
+  app.post("/api/scan-barcode-image", scanRateLimit, heavyOperationsRateLimit, async (req, res) => {
     try {
-      const { barcode } = req.body;
+      const { imageData } = req.body;
 
-      if (!barcode) {
-        return res.status(400).json({ message: "Barcode is required" });
+      if (!imageData) {
+        return res.status(400).json({ message: "Image data is required" });
       }
 
-      // Start async processing
-      const jobId = await processBarcodeScanAsync(req.userId!, barcode);
+      console.log('Processing image for barcode extraction with Gemini Vision...');
 
-      res.json({
-        jobId,
-        status: 'processing',
-        message: 'Scan started. Use the job ID to check status.',
-        pollUrl: `/api/jobs/${jobId}`
+      // Use Gemini Vision API to extract barcode from image
+      const barcode = await extractBarcodeFromImage(imageData);
+
+      if (barcode) {
+        console.log('🎉 Barcode extracted from image:', barcode);
+        res.json({ barcode });
+      } else {
+        console.log('No barcode found in image');
+        res.status(404).json({ 
+          message: "No barcode detected in the image",
+          suggestion: "Please ensure the barcode numbers are clearly visible and try again"
+        });
+      }
+    } catch (error) {
+      console.error('Image barcode scan error:', error);
+      res.status(500).json({ 
+        message: "Failed to process image", 
+        error: error instanceof Error ? error.message : String(error) 
       });
-    } catch (error) {
-      console.error('Async barcode scan error:', error);
-      res.status(500).json({ message: "Failed to start barcode scan", error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  // Async manual ingredient analysis - returns immediately with job ID
-  app.post("/api/scan/manual/async", scanRateLimit, heavyOperationsRateLimit, requireAuth, async (req, res) => {
-    try {
-      const { ingredients, productName } = req.body;
-
-      if (!ingredients) {
-        return res.status(400).json({ message: "Ingredients are required" });
-      }
-
-      // Parse ingredients
-      const parsedIngredients = typeof ingredients === 'string'
-        ? parseIngredientsText(ingredients)
-        : ingredients;
-
-      // Start async processing
-      const jobId = await processManualScanAsync(req.userId!, parsedIngredients, productName);
-
-      res.json({
-        jobId,
-        status: 'processing',
-        message: 'Analysis started. Use the job ID to check status.',
-        pollUrl: `/api/jobs/${jobId}`
-      });
-    } catch (error) {
-      console.error('Async manual scan error:', error);
-      res.status(500).json({ message: "Failed to start ingredient analysis", error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  // Job status endpoint for polling
-  app.get("/api/jobs/:jobId", requireAuth, async (req, res) => {
-    try {
-      const { jobId } = req.params;
-      const job = await getJobResult(jobId);
-
-      if (!job) {
-        return res.status(404).json({ message: "Job not found" });
-      }
-
-      // Only allow users to access their own jobs
-      if (job.userId !== req.userId) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-
-      const response: any = {
-        jobId: job.id,
-        status: job.status,
-        createdAt: job.createdAt,
-        completedAt: job.completedAt
-      };
-
-      if (job.status === 'completed' && job.result) {
-        response.result = job.result;
-      } else if (job.status === 'failed' && job.error) {
-        response.error = job.error;
-      } else if (job.status === 'processing') {
-        response.message = 'Job is currently being processed. Please check again in a moment.';
-      }
-
-      res.json(response);
-    } catch (error) {
-      console.error('Job status error:', error);
-      res.status(500).json({ message: "Failed to get job status" });
-    }
-  });
-
-  // Queue statistics endpoint (for monitoring)
-  app.get("/api/admin/queue-stats", requireAuth, async (req, res) => {
-    try {
-      const stats = getQueueStats();
-      res.json({
-        ...stats,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Queue stats error:', error);
-      res.status(500).json({ message: "Failed to get queue statistics" });
     }
   });
 

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { BarcodeData } from "./foodApi";
 
 // Initialize Google Gemini AI
 const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
@@ -26,21 +27,36 @@ export interface AnalysisResult {
 }
 
 export async function analyzeIngredients(
-  ingredients: string[],
+  productData: BarcodeData,
   userAllergies: string[],
   userMedications: string[]
 ): Promise<AnalysisResult> {
   const prompt = `
-    Analyze the following food ingredients for potential health risks:
+    Analyze the following food product for potential health risks:
     
-    Ingredients: ${ingredients.join(', ')}
-    User Allergies: ${userAllergies.join(', ')}
-    User Medications: ${userMedications.join(', ')}
+    PRODUCT INFORMATION:
+    - Product Name: ${productData.productName || 'Not specified'}
+    - Brand: ${productData.brand || 'Not specified'}
+    - Category: ${productData.category || 'Not specified'}
+    - Description: ${productData.description || 'Not specified'}
+    - Ingredients: ${productData.ingredients.join(', ') || 'Not specified'}
+    - Known Allergens: ${productData.allergens?.join(', ') || 'None listed'}
     
-    Please analyze for:
-    1. Allergen matches and cross-contamination risks
-    2. Food-drug interactions with current medications
-    3. Overall safety assessment
+    USER PROFILE:
+    - User Allergies: ${userAllergies.join(', ') || 'None'}
+    - User Medications: ${userMedications.join(', ') || 'None'}
+    
+    ANALYSIS REQUIREMENTS:
+    1. **Allergen Analysis**: Check for direct allergen matches and potential cross-contamination risks
+    2. **Drug Interactions**: Identify potential food-drug interactions with current medications
+    3. **Product Safety**: Assess overall safety based on product type, ingredients, and processing
+    4. **Hidden Risks**: Look for hidden allergens, additives, or processing methods that could pose risks
+    
+    SPECIAL CONSIDERATIONS:
+    - If ingredients are limited or generic (like "protein supplement"), analyze based on product type and description
+    - Consider supplement-specific risks (contamination, heavy metals, interactions)
+    - Account for processing methods that might introduce allergens
+    - Evaluate brand reputation and manufacturing practices when relevant
     
     Respond with a JSON object containing:
     {
@@ -49,7 +65,7 @@ export async function analyzeIngredients(
         {
           "allergen": "allergen name",
           "severity": "low|medium|high",
-          "message": "detailed explanation"
+          "message": "detailed explanation of risk and why it's concerning"
         }
       ],
       "drugInteractions": [
@@ -57,14 +73,17 @@ export async function analyzeIngredients(
           "medication": "medication name",
           "ingredient": "problematic ingredient",
           "severity": "low|medium|high", 
-          "message": "interaction details"
+          "message": "interaction details and potential effects"
         }
       ],
       "riskLevel": "safe|caution|danger"
     }
     
-    Be thorough in checking for hidden allergens and cross-contamination risks.
-    IMPORTANT: Respond ONLY with valid JSON, no additional text or formatting.
+    IMPORTANT: 
+    - Be thorough in checking for hidden allergens and cross-contamination risks
+    - Provide specific, actionable information
+    - Respond ONLY with valid JSON, no additional text or formatting
+    - If product information is limited, indicate uncertainty in the analysis
   `;
 
   try {
@@ -183,5 +202,97 @@ export async function chatWithAI(
       throw new Error('Invalid or missing Google Gemini API key');
     }
     throw new Error('Failed to get AI response');
+  }
+}
+
+export async function extractBarcodeFromImage(imageData: string): Promise<string | null> {
+  try {
+    if (!apiKey) {
+      throw new Error('Google Gemini API key not configured');
+    }
+
+    console.log('Using Gemini Vision API to extract barcode from image...');
+    console.log('Image data length:', imageData.length);
+    console.log('Image data starts with:', imageData.substring(0, 50));
+
+    // Validate image data format
+    if (!imageData.startsWith('data:image/')) {
+      throw new Error('Invalid image data format. Expected data:image/... format');
+    }
+
+    // Extract base64 data and MIME type
+    const [header, base64Data] = imageData.split(',');
+    if (!base64Data) {
+      throw new Error('No base64 data found in image');
+    }
+
+    // Extract MIME type from header
+    const mimeTypeMatch = header.match(/data:image\/([^;]+)/);
+    const mimeType = mimeTypeMatch ? `image/${mimeTypeMatch[1]}` : 'image/jpeg';
+    
+    console.log('Detected MIME type:', mimeType);
+    console.log('Base64 data length:', base64Data.length);
+
+    // Validate base64 data
+    if (base64Data.length < 100) {
+      throw new Error('Image data too small, likely invalid');
+    }
+
+    // Create a vision model for image analysis
+    const visionModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash-001" });
+
+    const prompt = `
+    Analyze this image and extract any barcode numbers you can see. 
+    
+    Look specifically for:
+    - 13-digit product barcodes (EAN-13 format)
+    - 12-digit UPC barcodes
+    - Any sequence of 10-15 digits that appears to be a product barcode
+    
+    IMPORTANT:
+    - Only return the numeric barcode, nothing else
+    - If you see multiple numbers, return the longest sequence that looks like a barcode
+    - If no barcode is visible, return "NO_BARCODE"
+    - Do not return URLs, QR codes, or other non-barcode text
+    - Focus on the numbers printed below or above barcode lines
+    
+    Return format: Just the barcode number (e.g., "8906067024954") or "NO_BARCODE"
+    `;
+
+    const result = await visionModel.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType
+        }
+      }
+    ]);
+
+    const response = await result.response;
+    const extractedText = response.text().trim();
+    
+    console.log('Gemini Vision extracted text:', extractedText);
+
+    // Clean up the response
+    const cleanedText = extractedText.replace(/[^\d]/g, '');
+    
+    if (cleanedText.length >= 10 && cleanedText.length <= 15) {
+      console.log('✅ Valid barcode extracted:', cleanedText);
+      return cleanedText;
+    } else if (extractedText.includes('NO_BARCODE')) {
+      console.log('❌ No barcode detected in image');
+      return null;
+    } else {
+      console.log('⚠️ Invalid barcode format extracted:', cleanedText);
+      return null;
+    }
+
+  } catch (error) {
+    console.error('Gemini Vision barcode extraction error:', error);
+    if (error instanceof Error && error.message.includes('API key')) {
+      throw new Error('Invalid or missing Google Gemini API key');
+    }
+    throw new Error('Failed to extract barcode from image');
   }
 }
