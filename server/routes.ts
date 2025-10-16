@@ -2,10 +2,16 @@ import "./env"; // Load environment variables first
 
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./database";
+import { storage, db } from "./database";
 import { registerSchema, loginSchema, updateProfileSchema, consultationBookingSchema } from "@shared/schema";
 import { analyzeIngredients, chatWithAI, extractBarcodeFromImage } from "./services/gemini";
 import { getBarcodeData, parseIngredientsText } from "./services/foodApi";
+import { 
+  initializeMLTrainingService, 
+  trainMLModelFromDatabase, 
+  validateMLModelFromDatabase, 
+  getMLModelMetricsFromDatabase 
+} from "./services/mlTrainingService";
 import { AuthService } from "./services/auth";
 import { requireAuth, optionalAuth, guestOnly, createSession, destroySession } from "./middleware/auth";
 import { authRateLimit, apiRateLimit, scanRateLimit, heavyOperationsRateLimit } from "./middleware/security";
@@ -580,6 +586,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Update consultation notes error:', error);
       res.status(500).json({ message: "Failed to update consultation notes" });
+    }
+  });
+
+  // ML Training and Management Routes
+  app.get("/api/ml/status", requireAuth, async (req, res) => {
+    try {
+      const metrics = await getMLModelMetricsFromDatabase(db);
+      res.json(metrics);
+    } catch (error) {
+      console.error('ML status error:', error);
+      res.status(500).json({ message: "Failed to get ML model status" });
+    }
+  });
+
+  app.post("/api/ml/train", requireAuth, heavyOperationsRateLimit, async (req, res) => {
+    try {
+      console.log('🎯 Starting ML model training...');
+      const result = await trainMLModelFromDatabase(db);
+      res.json(result);
+    } catch (error) {
+      console.error('ML training error:', error);
+      res.status(500).json({ 
+        message: "Failed to train ML model", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  app.post("/api/ml/validate", requireAuth, async (req, res) => {
+    try {
+      console.log('🧪 Validating ML model...');
+      const result = await validateMLModelFromDatabase(db);
+      res.json(result);
+    } catch (error) {
+      console.error('ML validation error:', error);
+      res.status(500).json({ 
+        message: "Failed to validate ML model", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  app.post("/api/ml/retrain", requireAuth, heavyOperationsRateLimit, async (req, res) => {
+    try {
+      console.log('🔄 Retraining ML model...');
+      const result = await trainMLModelFromDatabase(db);
+      res.json(result);
+    } catch (error) {
+      console.error('ML retraining error:', error);
+      res.status(500).json({ 
+        message: "Failed to retrain ML model", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
     }
   });
 

@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { BarcodeData } from "./foodApi";
+import { analyzeIngredientsWithML, getMLModelStatus } from "./mlAnalysis";
 
 // Initialize Google Gemini AI
 const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
@@ -24,9 +25,82 @@ export interface AnalysisResult {
     message: string;
   }>;
   riskLevel: 'safe' | 'caution' | 'danger';
+  confidence?: number;
+  analysisMethod?: 'ML' | 'LLM' | 'Hybrid';
+  analysisTime?: number;
 }
 
 export async function analyzeIngredients(
+  productData: BarcodeData,
+  userAllergies: string[],
+  userMedications: string[]
+): Promise<AnalysisResult> {
+  const startTime = Date.now();
+  
+  try {
+    // Check if ML model is available and try ML analysis first
+    const mlStatus = getMLModelStatus();
+    
+    if (mlStatus.isLoaded && productData.ingredients && productData.ingredients.length > 0) {
+      console.log('🤖 Attempting ML analysis first...');
+      
+      try {
+        const mlResult = await analyzeIngredientsWithML(productData, userAllergies, userMedications);
+        
+        // If ML confidence is high enough, use ML result
+        if (mlResult.confidence && mlResult.confidence > 0.8) {
+          console.log(`✅ Using ML analysis (confidence: ${(mlResult.confidence * 100).toFixed(1)}%)`);
+          return {
+            ...mlResult,
+            analysisMethod: 'ML',
+            analysisTime: Date.now() - startTime
+          };
+        }
+        
+        // If ML confidence is medium, use hybrid approach
+        if (mlResult.confidence && mlResult.confidence > 0.6) {
+          console.log(`🔄 Using hybrid analysis (ML confidence: ${(mlResult.confidence * 100).toFixed(1)}%)`);
+          
+          // Get LLM analysis for comparison
+          const llmResult = await analyzeIngredientsWithLLM(productData, userAllergies, userMedications);
+          
+          // Combine results (ML for structure, LLM for detailed explanations)
+          return {
+            safe: mlResult.safe,
+            riskLevel: mlResult.riskLevel,
+            allergenAlerts: mlResult.allergenAlerts.length > 0 ? mlResult.allergenAlerts : llmResult.allergenAlerts,
+            drugInteractions: mlResult.drugInteractions.length > 0 ? mlResult.drugInteractions : llmResult.drugInteractions,
+            confidence: mlResult.confidence,
+            analysisMethod: 'Hybrid',
+            analysisTime: Date.now() - startTime
+          };
+        }
+        
+        console.log(`⚠️ ML confidence too low (${(mlResult.confidence || 0) * 100}%), falling back to LLM`);
+        
+      } catch (mlError) {
+        console.warn('⚠️ ML analysis failed, falling back to LLM:', mlError);
+      }
+    }
+    
+    // Fallback to LLM analysis
+    console.log('🧠 Using LLM analysis...');
+    const llmResult = await analyzeIngredientsWithLLM(productData, userAllergies, userMedications);
+    
+    return {
+      ...llmResult,
+      analysisMethod: 'LLM',
+      analysisTime: Date.now() - startTime
+    };
+    
+  } catch (error) {
+    console.error('❌ Analysis failed:', error);
+    throw error;
+  }
+}
+
+// Separate LLM analysis function
+async function analyzeIngredientsWithLLM(
   productData: BarcodeData,
   userAllergies: string[],
   userMedications: string[]

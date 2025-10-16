@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Plus, X, Save, User, Shield, AlertTriangle, CheckCircle, Sparkles, Edit, Phone } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, X, Save, User, Shield, AlertTriangle, CheckCircle, Sparkles, Edit, Phone, Brain } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { MLTrainingPanel } from "@/components/ml-training-panel";
 import type { UpdateProfileData } from "@shared/schema";
 
 export default function Profile() {
@@ -31,6 +33,9 @@ export default function Profile() {
   const updateUserMutation = useMutation({
     mutationFn: async (userData: UpdateProfileData) => {
       const response = await apiRequest('PUT', `/api/users/${user?.id}`, userData);
+      if (!response) {
+        throw new Error('Failed to update profile');
+      }
       return response.json();
     },
     onSuccess: () => {
@@ -136,6 +141,21 @@ export default function Profile() {
           </p>
         </div>
       </div>
+
+      {/* Tabs for Profile and ML Training */}
+      <Tabs defaultValue="profile" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="profile" className="flex items-center gap-2">
+            <User className="h-4 w-4" />
+            Profile Settings
+          </TabsTrigger>
+          <TabsTrigger value="ml-training" className="flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            ML Training
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="profile" className="space-y-8">
 
       {/* Profile Header */}
       <Card className="bg-gradient-to-r from-white to-gray-50 dark:from-gray-900 dark:to-gray-800 shadow-lg">
@@ -500,6 +520,12 @@ export default function Profile() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="ml-training">
+          <MLTrainingPanel />
+        </TabsContent>
+      </Tabs>
       </div>
     </div>
   );

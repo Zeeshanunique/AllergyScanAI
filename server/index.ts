@@ -3,6 +3,8 @@ import "./env"; // Load environment variables first
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { initializeMLTrainingService } from "./services/mlTrainingService";
+import { storage, db } from "./database";
 // Note: Using simple token-based auth for development (no sessions)
 import { securityHeaders, corsConfig } from "./middleware/security";
 
@@ -48,6 +50,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Initialize ML model on server startup
+  try {
+    console.log('🚀 Initializing ML model...');
+    await initializeMLTrainingService(db);
+    console.log('✅ ML model initialization completed');
+  } catch (error) {
+    console.warn('⚠️ ML model initialization failed:', error);
+    console.log('📝 Server will continue with LLM-only analysis');
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
