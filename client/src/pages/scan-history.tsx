@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Search, Eye, History, Sparkles, CheckCircle, AlertTriangle, Shield, Clock, TrendingUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { AnalysisResults } from "@/components/analysis-results";
+import { DoctorConsultation } from "@/components/doctor-consultation";
 import { useAuth } from "@/contexts/AuthContext";
 import type { ScanHistory } from "@shared/schema";
 
@@ -14,6 +15,7 @@ export default function ScanHistoryPage() {
   const [filterRisk, setFilterRisk] = useState<string>("all");
   const [selectedScan, setSelectedScan] = useState<ScanHistory | null>(null);
   const [resultsOpen, setResultsOpen] = useState(false);
+  const [doctorConsultationOpen, setDoctorConsultationOpen] = useState(false);
 
   const { user } = useAuth();
 
@@ -89,7 +91,8 @@ export default function ScanHistoryPage() {
   };
 
   const handleConsultDoctor = () => {
-    // Handle doctor consultation
+    setResultsOpen(false);
+    setDoctorConsultationOpen(true);
   };
 
   const riskStats = (scanHistory && Array.isArray(scanHistory)) ? scanHistory.reduce((acc: Record<string, number>, scan: ScanHistory) => {
@@ -414,6 +417,13 @@ export default function ScanHistoryPage() {
         onSave={handleSaveResult}
         onShare={handleShareResult}
         onConsultDoctor={handleConsultDoctor}
+      />
+
+      {/* Doctor Consultation Modal */}
+      <DoctorConsultation
+        isOpen={doctorConsultationOpen}
+        onClose={() => setDoctorConsultationOpen(false)}
+        scanResult={selectedScan}
       />
       </div>
     </div>
